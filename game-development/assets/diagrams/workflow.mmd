@@ -1,0 +1,9 @@
+flowchart TD
+    A[Recepción de solicitud] --> B[Comprobación de SPEC];
+    B --> C{¿Existe SPEC válida?};
+    C -- Sí --> D[Validación];
+    C -- No --> E[Elaboración de SPEC];
+    E --> D;
+    D --> F{Aprobada por humano?};
+    F -- Sí --> G[Implementación autorizada];
+    F -- No --> C;
