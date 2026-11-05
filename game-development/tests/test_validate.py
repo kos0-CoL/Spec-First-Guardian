@@ -107,14 +107,14 @@ class TestSpecValidator(unittest.TestCase):
         path = write_temp(APPROVED_SPEC)
         try:
             fingerprint = hashlib.sha256(APPROVED_SPEC.encode("utf-8")).hexdigest()
-            approval = {
+            approval = spec_validator.sign_approval({
                 "spec_id": "SPEC-001",
                 "version": "1.0.0",
                 "approver": "usuario",
                 "approved_at": "2026-11-05",
                 "fingerprint": fingerprint,
                 "verified": True,
-            }
+            })
             result = spec_validator.validate_spec(path, approval=approval)
             self.assertTrue(result["document_valid"])
             self.assertTrue(result["requirements_valid"])
@@ -127,6 +127,25 @@ class TestSpecValidator(unittest.TestCase):
         path = write_temp(APPROVED_SPEC)
         try:
             result = spec_validator.validate_spec(path)
+            self.assertFalse(result["implementation_allowed"])
+        finally:
+            path.unlink()
+
+    def test_tampered_signed_approval_is_blocked(self):
+        path = write_temp(APPROVED_SPEC)
+        try:
+            fingerprint = hashlib.sha256(APPROVED_SPEC.encode("utf-8")).hexdigest()
+            approval = spec_validator.sign_approval({
+                "spec_id": "SPEC-001",
+                "version": "1.0.0",
+                "approver": "usuario",
+                "approved_at": "2026-11-05",
+                "fingerprint": fingerprint,
+                "verified": True,
+            })
+            approval["fingerprint"] = "0" * 64
+            result = spec_validator.validate_spec(path, approval=approval)
+            self.assertFalse(result["approval_valid"])
             self.assertFalse(result["implementation_allowed"])
         finally:
             path.unlink()

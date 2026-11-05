@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import hmac
 import json
+import os
 import re
 import sys
 import unicodedata
@@ -116,6 +118,46 @@ def load_approval(path: Path | None) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
+def sign_approval(approval: dict, key: str | None = None) -> dict:
+    signing_key = key or os.environ.get("SPEC_GUARDIAN_SIGNING_KEY", "spec-first-guardian-dev-key")
+    payload = json.dumps(
+        {
+            "spec_id": approval.get("spec_id"),
+            "version": approval.get("version"),
+            "approver": approval.get("approver"),
+            "approved_at": approval.get("approved_at"),
+            "fingerprint": approval.get("fingerprint"),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    signature = hmac.new(signing_key.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    record = dict(approval)
+    record["signature"] = signature
+    record["signed_at"] = approval.get("approved_at") or "1970-01-01"
+    record["signer"] = approval.get("approver") or "unknown"
+    return record
+
+
+def verify_approval(approval: dict, key: str | None = None) -> bool:
+    if not approval.get("verified") or not approval.get("signature"):
+        return False
+    signing_key = key or os.environ.get("SPEC_GUARDIAN_SIGNING_KEY", "spec-first-guardian-dev-key")
+    payload = json.dumps(
+        {
+            "spec_id": approval.get("spec_id"),
+            "version": approval.get("version"),
+            "approver": approval.get("approver"),
+            "approved_at": approval.get("approved_at"),
+            "fingerprint": approval.get("fingerprint"),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    expected = hmac.new(signing_key.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, str(approval.get("signature")))
+
+
 def validate_spec(path: Path, approval: dict | None = None) -> dict:
     errors: list = []
     warnings: list = []
@@ -158,7 +200,7 @@ def validate_spec(path: Path, approval: dict | None = None) -> dict:
     requirements_valid = document_valid and acceptance_criteria_count(body) > 0
 
     fingerprint = hashlib.sha256(text.encode("utf-8")).hexdigest()
-    approval_verified = bool(approval and approval.get("verified"))
+    approval_verified = bool(approval and verify_approval(approval))
     approval_valid = bool(
         status == "APPROVED"
         and approval_verified
