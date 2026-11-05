@@ -3,12 +3,14 @@
   "version": "1.0.0",
   "approver": "usuario",
   "approved_at": "2026-11-05",
-  "fingerprint": "5b8525413dbe4cb4a6df3ad486cb9a9da3fb34bd20106f1e83282486ffaa9837",
+  "fingerprint": "56d6203784beeaa5fb1f81054315d98c1fd1af2b9c9ca2d9ac8bc8a84cddba94",
   "scope": "ALCANCE_TOTAL",
   "authorization_event_id": "EVENT-2026-11-05-001",
   "verified": true,
   "revoked": false,
-  "signature": "cb378bc9f0c655392a6d752decbec798f7ee3160e9dc7d73e84c7ff925f638ea",
+  "algorithm": "Ed25519",
+  "signature": "LEmq2ZpUIJtpCjOAaUqCsgUbpB+95qXlQ6gX4erhtD62ScEsVyurfL+vWYV3GUpOIfEvtMLMd7ZhupUW9pEIBA==",
   "signed_at": "2026-11-05",
-  "signer": "usuario"
+  "signer": "usuario",
+  "public_key": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEADAIVhLGsksGB8nzeuTyjPm0Yvh92dzOWY/b8DDrHQxU=\n-----END PUBLIC KEY-----\n"
 }

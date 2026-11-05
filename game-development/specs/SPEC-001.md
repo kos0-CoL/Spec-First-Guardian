@@ -1,10 +1,12 @@
 ---
 spec_id: SPEC-001
+title: Spec-First Guardian
 status: APPROVED
 version: 1.0.0
 author: codebuff
+created_at: "2026-10-05"
 approver: usuario
-approved_at: 2026-11-05
+approved_at: "2026-11-05"
 ---
 
 # SPEC-001 — Spec-First Guardian

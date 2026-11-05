@@ -1,4 +1,5 @@
 import hashlib
+import json
 import sys
 import tempfile
 import unittest
@@ -7,14 +8,18 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 import validate as spec_validator
+import approval_service
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "templates" / "technical-specification.md"
 
 DRAFT_SPEC = """---
 spec_id: SPEC-001
 status: DRAFT
 version: 0.1.0
-author: [nombre]
-created_at: YYYY-MM-DD
+author: "[nombre]"
+created_at: "YYYY-MM-DD"
 approver: null
 approved_at: null
 ---
@@ -76,7 +81,7 @@ approved_at: null
 - Registro: pendiente.
 """
 
-APPROVED_SPEC = DRAFT_SPEC.replace("status: DRAFT", "status: APPROVED").replace("version: 0.1.0", "version: 1.0.0").replace("approver: null", "approver: usuario").replace("approved_at: null", "approved_at: 2026-11-05").replace("## Aprobación\n\n- Versión presentada: 0.1.0\n- Estado: DRAFT", "## Aprobación\n\n- Versión presentada: 1.0.0\n- Estado: APPROVED")
+APPROVED_SPEC = DRAFT_SPEC.replace("status: DRAFT", "status: APPROVED").replace("version: 0.1.0", "version: 1.0.0").replace("approver: null", "approver: usuario").replace("approved_at: null", 'approved_at: "2026-11-05"').replace("## Aprobación\n\n- Versión presentada: 0.1.0\n- Estado: DRAFT", "## Aprobación\n\n- Versión presentada: 1.0.0\n- Estado: APPROVED")
 
 
 def write_temp(content: str) -> Path:
@@ -84,6 +89,34 @@ def write_temp(content: str) -> Path:
     tmp.write(content)
     tmp.close()
     return Path(tmp.name)
+
+
+def ed25519_signed_approval(fingerprint: str, **overrides) -> dict:
+    approval = {
+        "spec_id": "SPEC-001",
+        "version": "1.0.0",
+        "approver": "usuario",
+        "approved_at": "2026-11-05",
+        "fingerprint": fingerprint,
+        "scope": "ALCANCE_TOTAL",
+        "authorization_event_id": "EVENT-2026-11-05-001",
+        "verified": True,
+        "revoked": False,
+    }
+    approval.update(overrides)
+    private_key = Ed25519PrivateKey.generate()
+    private_key_pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    signed = approval_service.sign_approval(approval, private_key_pem)
+    public_key_pem = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    signed["public_key"] = public_key_pem.decode("ascii")
+    return signed
 
 
 class TestSpecValidator(unittest.TestCase):
@@ -103,18 +136,11 @@ class TestSpecValidator(unittest.TestCase):
         finally:
             path.unlink()
 
-    def test_approved_with_external_approval_is_allowed(self):
+    def test_approved_with_ed25519_signed_approval_is_allowed(self):
         path = write_temp(APPROVED_SPEC)
         try:
             fingerprint = hashlib.sha256(APPROVED_SPEC.encode("utf-8")).hexdigest()
-            approval = spec_validator.sign_approval({
-                "spec_id": "SPEC-001",
-                "version": "1.0.0",
-                "approver": "usuario",
-                "approved_at": "2026-11-05",
-                "fingerprint": fingerprint,
-                "verified": True,
-            })
+            approval = ed25519_signed_approval(fingerprint)
             result = spec_validator.validate_spec(path, approval=approval)
             self.assertTrue(result["document_valid"])
             self.assertTrue(result["requirements_valid"])
@@ -131,19 +157,24 @@ class TestSpecValidator(unittest.TestCase):
         finally:
             path.unlink()
 
-    def test_tampered_signed_approval_is_blocked(self):
+    def test_tampered_ed25519_approval_is_blocked(self):
         path = write_temp(APPROVED_SPEC)
         try:
             fingerprint = hashlib.sha256(APPROVED_SPEC.encode("utf-8")).hexdigest()
-            approval = spec_validator.sign_approval({
-                "spec_id": "SPEC-001",
-                "version": "1.0.0",
-                "approver": "usuario",
-                "approved_at": "2026-11-05",
-                "fingerprint": fingerprint,
-                "verified": True,
-            })
+            approval = ed25519_signed_approval(fingerprint)
             approval["fingerprint"] = "0" * 64
+            result = spec_validator.validate_spec(path, approval=approval)
+            self.assertFalse(result["approval_valid"])
+            self.assertFalse(result["implementation_allowed"])
+        finally:
+            path.unlink()
+
+    def test_revoked_approval_is_blocked(self):
+        path = write_temp(APPROVED_SPEC)
+        try:
+            fingerprint = hashlib.sha256(APPROVED_SPEC.encode("utf-8")).hexdigest()
+            approval = ed25519_signed_approval(fingerprint)
+            approval["revoked"] = True
             result = spec_validator.validate_spec(path, approval=approval)
             self.assertFalse(result["approval_valid"])
             self.assertFalse(result["implementation_allowed"])
@@ -156,6 +187,25 @@ class TestSpecValidator(unittest.TestCase):
             result = spec_validator.validate_spec(path)
             self.assertFalse(result["document_valid"])
             self.assertTrue(result["errors"])
+        finally:
+            path.unlink()
+
+    def test_template_generates_valid_spec_and_blocks_implementation(self):
+        content = TEMPLATE_PATH.read_text(encoding="utf-8")
+        example = (
+            content.replace("spec_id: SPEC-001", "spec_id: SPEC-101")
+            .replace('title: "[nombre de la especificación]"', 'title: "Especificacion de prueba"')
+            .replace('author: "[nombre]"', 'author: "tester"')
+            .replace('created_at: "YYYY-MM-DD"', 'created_at: "2026-11-05"')
+            .replace("# SPEC-001 — [Título]", "# SPEC-101 — Especificacion de prueba")
+            .replace("- Estado: [DRAFT | UNDER_REVIEW | PENDING_USER_APPROVAL | APPROVED | REJECTED | SUPERSEDED | ARCHIVED]", "- Estado: DRAFT")
+        )
+        path = write_temp(example)
+        try:
+            result = spec_validator.validate_spec(path)
+            self.assertTrue(result["document_valid"])
+            self.assertTrue(result["requirements_valid"])
+            self.assertFalse(result["implementation_allowed"])
         finally:
             path.unlink()
 

@@ -1,9 +1,10 @@
 ---
 spec_id: SPEC-001
+title: "[nombre de la especificación]"
 status: DRAFT
 version: 0.1.0
-author: [nombre]
-created_at: YYYY-MM-DD
+author: "[nombre]"
+created_at: "YYYY-MM-DD"
 approver: null
 approved_at: null
 ---

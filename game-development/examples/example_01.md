@@ -1,10 +1,12 @@
 ---
 spec_id: SPEC-101
+title: Dash mechanic
 status: APPROVED
 version: 1.0.0
 author: equipo-dev
+created_at: "2026-09-28"
 approver: usuario
-approved_at: 2026-10-01
+approved_at: "2026-10-01"
 ---
 
 # SPEC-101 — Añadir mecánica de dash

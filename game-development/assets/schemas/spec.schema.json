@@ -2,11 +2,14 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Spec-First Guardian",
   "type": "object",
-  "required": ["spec_id", "status"],
+  "required": ["spec_id", "status", "version", "author", "created_at"],
   "properties": {
     "spec_id": {
       "type": "string",
       "pattern": "^SPEC-[0-9]+$"
+    },
+    "title": {
+      "type": "string"
     },
     "status": {
       "type": "string",
@@ -18,12 +21,15 @@
     "author": {
       "type": "string"
     },
-    "approver": {
-      "type": "string"
-    },
-    "approved_at": {
+    "created_at": {
       "type": "string",
       "format": "date"
+    },
+    "approver": {
+      "type": ["string", "null"]
+    },
+    "approved_at": {
+      "type": ["string", "null"]
     }
   }
 }

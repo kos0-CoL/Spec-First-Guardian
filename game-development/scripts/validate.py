@@ -7,22 +7,30 @@ Uso:
     python scripts/validate.py <ruta-a-spec.md> [--json]
 
 Codigos de salida:
-    0  La especificacion es valida.
+    0  La especificacion es valida y, si aplica, la implementacion esta permitida.
     1  La especificacion es invalida.
     2  Error de uso o de lectura del archivo.
+    3  La especificacion es valida pero la implementacion esta bloqueada (sin autorizacion verificable).
+    5  Error interno.
 """
 
 from __future__ import annotations
 
 import argparse
 import hashlib
-import hmac
 import json
-import os
 import re
 import sys
 import unicodedata
 from pathlib import Path
+
+import yaml
+from jsonschema import ValidationError
+from jsonschema import validate as jsonschema_validate
+
+import approval_service
+
+SCHEMA_PATH = Path(__file__).resolve().parent.parent / "assets" / "schemas" / "spec.schema.json"
 
 ALLOWED_STATUSES = ("DRAFT", "UNDER_REVIEW", "PENDING_USER_APPROVAL", "APPROVED", "REJECTED", "SUPERSEDED", "ARCHIVED")
 REQUIRED_SECTIONS = (
@@ -55,12 +63,10 @@ def parse_frontmatter(text: str) -> dict:
     match = FRONTMATTER_PATTERN.match(text)
     if not match:
         return {}
-    data: dict = {}
-    for line in match.group(1).splitlines():
-        if ":" in line:
-            key, _, value = line.partition(":")
-            data[key.strip().lower()] = value.strip()
-    return data
+    data = yaml.safe_load(match.group(1)) or {}
+    if not isinstance(data, dict):
+        return {}
+    return {str(key).lower(): value for key, value in data.items()}
 
 
 def extract_headings(body: str) -> list:
@@ -118,44 +124,27 @@ def load_approval(path: Path | None) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
-def sign_approval(approval: dict, key: str | None = None) -> dict:
-    signing_key = key or os.environ.get("SPEC_GUARDIAN_SIGNING_KEY", "spec-first-guardian-dev-key")
-    payload = json.dumps(
-        {
-            "spec_id": approval.get("spec_id"),
-            "version": approval.get("version"),
-            "approver": approval.get("approver"),
-            "approved_at": approval.get("approved_at"),
-            "fingerprint": approval.get("fingerprint"),
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    signature = hmac.new(signing_key.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
-    record = dict(approval)
-    record["signature"] = signature
-    record["signed_at"] = approval.get("approved_at") or "1970-01-01"
-    record["signer"] = approval.get("approver") or "unknown"
-    return record
-
-
-def verify_approval(approval: dict, key: str | None = None) -> bool:
-    if not approval.get("verified") or not approval.get("signature"):
-        return False
-    signing_key = key or os.environ.get("SPEC_GUARDIAN_SIGNING_KEY", "spec-first-guardian-dev-key")
-    payload = json.dumps(
-        {
-            "spec_id": approval.get("spec_id"),
-            "version": approval.get("version"),
-            "approver": approval.get("approver"),
-            "approved_at": approval.get("approved_at"),
-            "fingerprint": approval.get("fingerprint"),
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    expected = hmac.new(signing_key.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
-    return hmac.compare_digest(expected, str(approval.get("signature")))
+def validate_metadata_with_schema(frontmatter: dict) -> list:
+    errors: list = []
+    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+    instance: dict = {}
+    for key, value in (
+        ("spec_id", frontmatter.get("spec_id")),
+        ("title", frontmatter.get("title")),
+        ("status", frontmatter.get("status")),
+        ("version", frontmatter.get("version")),
+        ("author", frontmatter.get("author")),
+        ("created_at", frontmatter.get("created_at")),
+        ("approver", frontmatter.get("approver")),
+        ("approved_at", frontmatter.get("approved_at")),
+    ):
+        if value is not None:
+            instance[key] = value
+    try:
+        jsonschema_validate(instance=instance, schema=schema)
+    except ValidationError as error:
+        errors.append(f"Metadatos no cumplen el esquema: {error.message}")
+    return errors
 
 
 def validate_spec(path: Path, approval: dict | None = None) -> dict:
@@ -169,11 +158,13 @@ def validate_spec(path: Path, approval: dict | None = None) -> dict:
     frontmatter = parse_frontmatter(text)
     body = FRONTMATTER_PATTERN.sub("", text, count=1).strip()
 
-    spec_id = frontmatter.get("spec_id")
-    status = frontmatter.get("status", "").upper()
-    version = frontmatter.get("version", "")
-    approver = frontmatter.get("approver", "")
-    approved_at = frontmatter.get("approved_at", "")
+    spec_id = str(frontmatter.get("spec_id") or "")
+    status = str(frontmatter.get("status") or "").upper()
+    version = str(frontmatter.get("version") or "")
+    approver = str(frontmatter.get("approver") or "")
+    approved_at = str(frontmatter.get("approved_at") or "")
+
+    errors.extend(validate_metadata_with_schema(frontmatter))
 
     if not spec_id or not SPEC_ID_PATTERN.match(spec_id):
         errors.append("El frontmatter debe definir un spec_id valido con formato SPEC-001 (por ejemplo SPEC-002).")
@@ -200,10 +191,11 @@ def validate_spec(path: Path, approval: dict | None = None) -> dict:
     requirements_valid = document_valid and acceptance_criteria_count(body) > 0
 
     fingerprint = hashlib.sha256(text.encode("utf-8")).hexdigest()
-    approval_verified = bool(approval and verify_approval(approval))
+    approval_verified = bool(approval and approval_service.verify_approval(approval))
     approval_valid = bool(
         status == "APPROVED"
         and approval_verified
+        and not bool(approval.get("revoked", False))
         and bool(version)
         and bool(approver)
         and bool(approved_at)
@@ -289,7 +281,11 @@ def main(argv=None) -> int:
                 print(f"  - {warning}")
         print(f"Resultado: {'VALIDA' if result['valid'] else 'INVALIDA'}")
 
-    return 0 if result["valid"] else 1
+    if not result["valid"]:
+        return 1
+    if not result["implementation_allowed"]:
+        return 3
+    return 0
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@ spec_id: SPEC-102
 status: DRAFT
 version: 0.1.0
 author: agente-dev
+created_at: "2026-10-03"
 approver: pendiente
 ---
 
