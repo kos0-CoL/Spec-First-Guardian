@@ -41,6 +41,14 @@ incompleta, estado desconocido o versión de SPEC desconocida.
 4. Adaptador de integración.
 5. Enforcement efectivo.
 
+## Implementacion actual
+
+El modulo `scripts/enforce.py` expone la evaluacion:
+
+```bash
+python scripts/enforce.py <operacion> <ruta-a-spec.md> --task-id TASK-001 --approval <registro.json>
+```
+
 ## Registro
 
 Todo intento denegado debe quedar registrado con tarea, agente, motivo, estado de
