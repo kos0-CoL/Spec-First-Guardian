@@ -4,8 +4,8 @@
 
 ## Identificación
 
-- **Spec ID**: SPEC-XXX
-- **Estado**: draft | validated | approved | rejected
+- **Spec ID**: SPEC-001
+- **Estado**: DRAFT | UNDER_REVIEW | PENDING_USER_APPROVAL | APPROVED | REJECTED | SUPERSEDED | ARCHIVED
 
 ## Visión
 

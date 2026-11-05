@@ -5,7 +5,7 @@
 ## Identificación
 
 - **Bug ID**: BUG-XXX
-- **Spec relacionada**: SPEC-XXX
+- **Spec relacionada**: SPEC-001
 - **Severidad**: baja | media | alta | crítica
 
 ## Pasos de reproducción

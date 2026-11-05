@@ -42,7 +42,7 @@ Cada etapa está detallada en `instructions/workflow.md`.
 
 ## Reglas críticas
 
-- No escribir ni modificar código hasta que la SPEC esté en estado `approved`.
+- No escribir ni modificar código hasta que la SPEC esté en estado `APPROVED`.
 - Las desviaciones de la SPEC aprobada deben registrarse y justificarse.
 - El silencio, la falta de respuesta o la aprobación de agentes no equivalen a
   aprobación humana.

@@ -102,7 +102,7 @@ Antes de habilitar una operación de escritura, el orquestador debe verificar:
 1. Existencia de una SPEC.
 2. Identificador único de SPEC.
 3. Versión de SPEC.
-4. Estado `approved`.
+4. Estado `APPROVED`.
 5. Aprobación registrada por el usuario.
 6. Correspondencia entre la tarea y el alcance aprobado.
 7. Ausencia de bloqueos.

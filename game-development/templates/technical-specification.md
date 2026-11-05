@@ -1,47 +1,100 @@
-# SPEC-XXX — [Título]
+---
+spec_id: SPEC-001
+status: DRAFT
+version: 0.1.0
+author: [nombre]
+created_at: YYYY-MM-DD
+approver: null
+approved_at: null
+---
 
-> Plantilla base para especificaciones técnicas y funcionales (SPEC-001).
+# SPEC-001 — [Título]
 
-## Metadatos
+> Plantilla base para especificaciones técnicas y funcionales del Spec-First
+> Guardian (SPEC-001). Para especificaciones posteriores, adaptar el identificador
+> (p. ej. SPEC-002, SPEC-003) manteniendo el mismo formato.
 
-- **Spec ID**: SPEC-XXX
-- **Estado**: DRAFT | UNDER_REVIEW | PENDING_USER_APPROVAL | APPROVED | REJECTED | SUPERSEDED | ARCHIVED
-- **Versión**: X.Y.Z
-- **Autor**: [nombre]
-- **Aprobador**: [nombre]
-- **Fecha de creación**: [fecha]
-- **Fecha de aprobación**: [fecha]
+## Identificación
 
-## 1. Identificación
+- ID: SPEC-001
+- Nombre: [nombre de la especificación]
+- Versión: [X.Y.Z]
+- Proyecto: [proyecto]
+- Estado: [DRAFT | UNDER_REVIEW | PENDING_USER_APPROVAL | APPROVED | REJECTED | SUPERSEDED | ARCHIVED]
+- Fecha de creación: [fecha]
 
-## 2. Contexto
+## Contexto
 
-## 3. Objetivos
+- Problema que se quiere resolver: [problema].
+- Situación actual: [contexto actual].
+- Motivación: [motivación].
 
-## 4. Fuera de alcance
+## Objetivos
 
-## 5. Requisitos funcionales
+- Resultado esperado: [resultado esperado].
+- Alcance funcional: [alcance funcional].
+- Alcance técnico: [alcance técnico].
 
-## 6. Requisitos no funcionales
+## Fuera de alcance
 
-## 7. Diseño técnico
+- Funcionalidades excluidas: [exclusiones].
+- Modificaciones no autorizadas: [modificaciones fuera de alcance].
+- Limitaciones conocidas: [limitaciones].
 
-## 8. Restricciones
+## Requisitos funcionales
 
-## 9. Criterios de aceptación
+- RF-001: [descripción del requisito]. Prioridad: [alta | media | baja].
 
-## 10. Estrategia de validación
+## Requisitos no funcionales
 
-## 11. Riesgos y dependencias
+- Rendimiento: [requisitos].
+- Seguridad: [requisitos].
+- Compatibilidad: [requisitos].
+- Accesibilidad: [opcional].
+- Mantenibilidad: [opcional].
 
-## 12. Plan de implementación
+## Diseño técnico
 
-## 13. Aprobación
+- Arquitectura afectada: [arquitectura].
+- Componentes: [componentes].
+- Interfaces: [interfaces].
+- Dependencias: [dependencias].
+- Flujo de información: [flujo].
+
+## Restricciones
+
+- Tecnologías permitidas: [lista].
+- Tecnologías prohibidas: [lista].
+- Compatibilidad: [compatibilidad].
+- Reglas globales: [políticas globales].
+
+## Criterios de aceptación
+
+- [Criterio verificable 1].
+- [Criterio verificable 2].
+
+## Estrategia de validación
+
+- Pruebas unitarias, integración, funcionales y de regresión.
+
+## Riesgos y dependencias
+
+- Riesgos: [lista].
+- Dependencias: [lista].
+
+## Plan de implementación
+
+- Tareas: [tareas].
+- Orden: [orden].
+- Componentes afectados: [componentes].
+- Trazabilidad: [requisito → tarea].
+
+## Aprobación
 
 - Versión presentada: [X.Y.Z]
 - Estado: [APPROVED]
 - Registro de aprobación: [ID, versión, aprobador, fecha]
 
-> No todos los apartados requieren necesariamente contenido extenso. Cuando alguno
-> no aplique, debe indicarse expresamente y justificarse. No se permite omitirlo
+> No todos los apartados requieren contenido extenso. Cuando alguno no
+> aplique, debe indicarse expresamente y justificarse. No se permite omitirlo
 > silenciosamente.

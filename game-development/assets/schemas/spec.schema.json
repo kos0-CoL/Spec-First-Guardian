@@ -10,7 +10,7 @@
     },
     "status": {
       "type": "string",
-      "enum": ["draft", "validated", "approved", "rejected"]
+      "enum": ["DRAFT", "UNDER_REVIEW", "PENDING_USER_APPROVAL", "APPROVED", "REJECTED", "SUPERSEDED", "ARCHIVED"]
     },
     "version": {
       "type": "string"

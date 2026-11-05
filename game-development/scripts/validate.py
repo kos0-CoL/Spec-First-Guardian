@@ -15,6 +15,7 @@ Codigos de salida:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -105,12 +106,22 @@ def acceptance_criteria_count(body: str) -> int:
     return count
 
 
-def validate_spec(path: Path) -> dict:
+def load_approval(path: Path | None) -> dict | None:
+    if path is None or not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def validate_spec(path: Path, approval: dict | None = None) -> dict:
     errors: list = []
     warnings: list = []
 
     if not path.exists():
-        return {"valid": False, "spec_id": None, "status": None, "errors": [f"No existe el archivo: {path}"], "warnings": []}
+        return {"valid": False, "document_valid": False, "requirements_valid": False, "approval_valid": False, "implementation_allowed": False, "approval_verified": False, "spec_id": None, "status": None, "version": None, "approver": None, "approved_at": None, "errors": [f"No existe el archivo: {path}"], "warnings": []}
 
     text = path.read_text(encoding="utf-8")
     frontmatter = parse_frontmatter(text)
@@ -123,7 +134,7 @@ def validate_spec(path: Path) -> dict:
     approved_at = frontmatter.get("approved_at", "")
 
     if not spec_id or not SPEC_ID_PATTERN.match(spec_id):
-        errors.append("El frontmatter debe definir un spec_id valido con formato SPEC-XXX.")
+        errors.append("El frontmatter debe definir un spec_id valido con formato SPEC-001 (por ejemplo SPEC-002).")
 
     if status not in ALLOWED_STATUSES:
         errors.append(f"Estado no valido: '{status}'. Valores permitidos: {', '.join(ALLOWED_STATUSES)}.")
@@ -143,8 +154,31 @@ def validate_spec(path: Path) -> dict:
         if not approved_at:
             warnings.append("La aprobacion no registra fecha.")
 
+    document_valid = len(errors) == 0
+    requirements_valid = document_valid and acceptance_criteria_count(body) > 0
+
+    fingerprint = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    approval_verified = bool(approval and approval.get("verified"))
+    approval_valid = bool(
+        status == "APPROVED"
+        and approval_verified
+        and bool(version)
+        and bool(approver)
+        and bool(approved_at)
+        and approval.get("fingerprint") == fingerprint
+        and approval.get("spec_id") == spec_id
+        and approval.get("version") == version
+    )
+
+    implementation_allowed = bool(document_valid and requirements_valid and approval_valid)
+
     result = {
-        "valid": len(errors) == 0,
+        "valid": document_valid,
+        "document_valid": document_valid,
+        "requirements_valid": requirements_valid,
+        "approval_valid": approval_valid,
+        "implementation_allowed": implementation_allowed,
+        "approval_verified": approval_verified,
         "spec_id": spec_id,
         "status": status or None,
         "version": version or None,
@@ -153,6 +187,12 @@ def validate_spec(path: Path) -> dict:
         "errors": errors,
         "warnings": warnings,
     }
+
+    if not implementation_allowed:
+        if not approval_verified:
+            warnings.append("Implementacion bloqueada: falta aprobacion humana verificable para la version aprobada.")
+        elif not requirements_valid:
+            warnings.append("Implementacion bloqueada: la especificacion no define criterios de aceptacion verificables.")
 
     if status != "APPROVED":
         warnings.append("Estado actual: la implementacion esta bloqueada hasta que la SPEC sea aprobada.")
@@ -164,13 +204,24 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Valida una especific para el Spec-First Guardian.")
     parser.add_argument("spec", type=Path, help="Ruta al archivo de especificacion (Markdown).")
     parser.add_argument("--json", action="store_true", help="Salida en formato JSON.")
+    parser.add_argument("--approval", type=Path, default=None, help="Ruta al registro de aprobacion (JSON) verificable.")
     args = parser.parse_args(argv)
 
-    result = validate_spec(args.spec)
+    if not args.spec.exists():
+        print(f"No existe el archivo: {args.spec}")
+        return 2
+
+    approval = load_approval(args.approval) if args.approval else None
+    result = validate_spec(args.spec, approval=approval)
 
     if args.json:
         payload = {
             "valid": result["valid"],
+            "document_valid": result["document_valid"],
+            "requirements_valid": result["requirements_valid"],
+            "approval_valid": result["approval_valid"],
+            "implementation_allowed": result["implementation_allowed"],
+            "approval_verified": result["approval_verified"],
             "spec_id": result["spec_id"],
             "status": result["status"],
             "version": result["version"],
@@ -185,6 +236,7 @@ def main(argv=None) -> int:
         print(f"Version: {result['version'] or 'N/A'}")
         print(f"Aprobador: {result['approver'] or 'N/A'}")
         print(f"Aprobado el: {result['approved_at'] or 'N/A'}")
+        print(f"Implementacion permitida: {'SI' if result['implementation_allowed'] else 'NO'}")
         if result["errors"]:
             print("Errores:")
             for error in result["errors"]:

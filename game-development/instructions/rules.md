@@ -14,8 +14,19 @@
 
 ## Estados y transiciones
 
-- `draft` → `validated` → `approved` → (implementación).
-- `rejected` o ausencia de aprobación: sin implementación.
+Estados permitidos: `DRAFT`, `UNDER_REVIEW`, `PENDING_USER_APPROVAL`, `APPROVED`,
+`REJECTED`, `SUPERSEDED`, `ARCHIVED`.
+
+Transiciones controladas:
+
+- `DRAFT` → `UNDER_REVIEW`
+- `UNDER_REVIEW` → `DRAFT` o `PENDING_USER_APPROVAL`
+- `PENDING_USER_APPROVAL` → `APPROVED`, `REJECTED` o `DRAFT`
+- `APPROVED` → `SUPERSEDED` o `ARCHIVED`
+- `REJECTED` → `DRAFT` o `ARCHIVED`
+- `SUPERSEDED` → `ARCHIVED`
+
+La transición a `APPROVED` solo puede realizarse mediante una acción explícita del usuario.
 
 ## Bloqueos
 

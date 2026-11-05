@@ -13,7 +13,8 @@ import validate
 
 
 def build_report(result: dict) -> str:
-    approved = result["status"] == "approved"
+    approved = str(result.get("status") or "").upper() == "APPROVED"
+    implementation_allowed = bool(result.get("implementation_allowed"))
     lines = [
         "# Informe de Cumplimiento — Spec-First Guardian (SPEC-001)",
         "",
@@ -28,13 +29,23 @@ def build_report(result: dict) -> str:
         f"- **Errores**: {len(result['errors'])}",
         f"- **Advertencias**: {len(result['warnings'])}",
         "",
+        "## Resultado de la autorizacion",
+        "",
+        f"- **Estado de la SPEC**: {result['status'] or 'N/A'}",
+        f"- **Aprobacion humana verificada**: {'SI' if result.get('approval_valid') else 'NO'}",
+        f"- **Implementacion permitida**: {'SI' if implementation_allowed else 'NO'}",
+        "",
         "## Bloqueo de implementacion",
         "",
     ]
-    if approved and not result["errors"]:
-        lines.append("La especificacion esta aprobada y valida. Proceder a implementacion dentro del alcance aprobado.")
-    else:
+    if implementation_allowed:
+        lines.append("La especificacion esta aprobada, valida y autorizada. Proceder a implementacion dentro del alcance aprobado.")
+    elif not approved:
+        lines.append("IMPLEMENTACION BLOQUEADA: PENDIENTE DE APROBACION HUMANA.")
         lines.append("La implementacion esta bloqueada. Se requiere una especificacion valida y aprobada por el usuario humano.")
+    else:
+        lines.append("IMPLEMENTACION BLOQUEADA: LA APROBACION NO PUEDE VERIFICARSE.")
+        lines.append("La implementacion esta bloqueada. Falta una aprobacion humana verificable para la version aprobada.")
     lines.append("")
     return "\n".join(lines)
 
@@ -72,7 +83,11 @@ def main(argv=None) -> int:
     parser.add_argument("--allowed", default="")
     parser.add_argument("--forbidden", default="")
     parser.add_argument("--next-step", default="Elaborar SPEC.")
+    parser.add_argument("--approval", type=Path, default=None, help="Ruta al registro de aprobacion (JSON) verificable.")
     args = parser.parse_args(argv)
+
+    approval = validate.load_approval(args.approval) if args.approval else None
+    result = validate.validate_spec(args.spec, approval=approval)
 
     if args.block:
         missing = [m.strip() for m in args.missing_requirements.split(",") if m.strip()]
@@ -81,10 +96,9 @@ def main(argv=None) -> int:
         print(build_block_report(args.task_id, args.agent, args.project, args.reason, args.spec_status, missing, allowed, forbidden, args.next_step))
         return 0
 
-    result = validate.validate_spec(args.spec)
     report = build_report(result)
     print(report)
-    return 0 if result["valid"] else 1
+    return 0 if result.get("implementation_allowed") else 1
 
 
 if __name__ == "__main__":

@@ -1,0 +1,11 @@
+{
+  "spec_id": "SPEC-001",
+  "version": "1.0.0",
+  "approver": "usuario",
+  "approved_at": "2026-11-05",
+  "fingerprint": "5b8525413dbe4cb4a6df3ad486cb9a9da3fb34bd20106f1e83282486ffaa9837",
+  "scope": "ALCANCE_TOTAL",
+  "authorization_event_id": "EVENT-2026-11-05-001",
+  "verified": true,
+  "revoked": false
+}
