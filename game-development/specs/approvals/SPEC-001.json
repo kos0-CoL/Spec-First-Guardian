@@ -8,9 +8,9 @@
   "authorization_event_id": "EVENT-2026-11-05-001",
   "verified": true,
   "revoked": false,
+  "key_id": "KEY-2026-11-05-001",
   "algorithm": "Ed25519",
-  "signature": "LEmq2ZpUIJtpCjOAaUqCsgUbpB+95qXlQ6gX4erhtD62ScEsVyurfL+vWYV3GUpOIfEvtMLMd7ZhupUW9pEIBA==",
+  "signature": "wSm2oP+2OWN0ESXTYo6uM5KxFQ6K6DKJ4L3Cee2Tazl846oP75GPvuUBkA2wko79TXjrh161iuCnVt3f7DS0Bg==",
   "signed_at": "2026-11-05",
-  "signer": "usuario",
-  "public_key": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEADAIVhLGsksGB8nzeuTyjPm0Yvh92dzOWY/b8DDrHQxU=\n-----END PUBLIC KEY-----\n"
+  "signer": "usuario"
 }

@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import sys
 import unicodedata
@@ -147,7 +148,19 @@ def validate_metadata_with_schema(frontmatter: dict) -> list:
     return errors
 
 
-def validate_spec(path: Path, approval: dict | None = None) -> dict:
+def load_revocations(spec_id: str) -> list:
+    path = Path(__file__).resolve().parent.parent / "specs" / "revocations" / f"{spec_id}.json"
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    entries = data.get("revocations") if isinstance(data, dict) else None
+    return entries if isinstance(entries, list) else []
+
+
+def validate_spec(path: Path, approval: dict | None = None, public_key_pem: bytes | None = None) -> dict:
     errors: list = []
     warnings: list = []
 
@@ -191,10 +204,17 @@ def validate_spec(path: Path, approval: dict | None = None) -> dict:
     requirements_valid = document_valid and acceptance_criteria_count(body) > 0
 
     fingerprint = hashlib.sha256(text.encode("utf-8")).hexdigest()
-    approval_verified = bool(approval and approval_service.verify_approval(approval))
+    approval_verified = bool(approval and approval_service.verify_approval(approval, public_key_pem=public_key_pem))
+    revoked = False
+    if approval is not None and str(spec_id or ""):
+        for entry in load_revocations(str(spec_id)):
+            if isinstance(entry, dict) and entry.get("authorization_event_id") == approval.get("authorization_event_id") and bool(entry.get("revoked")):
+                revoked = True
+                break
     approval_valid = bool(
         status == "APPROVED"
         and approval_verified
+        and not revoked
         and not bool(approval.get("revoked", False))
         and bool(version)
         and bool(approver)
@@ -246,7 +266,11 @@ def main(argv=None) -> int:
         return 2
 
     approval = load_approval(args.approval) if args.approval else None
-    result = validate_spec(args.spec, approval=approval)
+    public_key_pem = None
+    env_public_key = os.environ.get("SPEC_GUARDIAN_ED25519_PUBLIC_KEY")
+    if env_public_key:
+        public_key_pem = env_public_key.encode("utf-8")
+    result = validate_spec(args.spec, approval=approval, public_key_pem=public_key_pem)
 
     if args.json:
         payload = {

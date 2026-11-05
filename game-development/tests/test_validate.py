@@ -91,7 +91,7 @@ def write_temp(content: str) -> Path:
     return Path(tmp.name)
 
 
-def ed25519_signed_approval(fingerprint: str, **overrides) -> dict:
+def ed25519_signed_approval(fingerprint: str, key_id: str = "KEY-TEST-001") -> tuple:
     approval = {
         "spec_id": "SPEC-001",
         "version": "1.0.0",
@@ -103,20 +103,18 @@ def ed25519_signed_approval(fingerprint: str, **overrides) -> dict:
         "verified": True,
         "revoked": False,
     }
-    approval.update(overrides)
     private_key = Ed25519PrivateKey.generate()
     private_key_pem = private_key.private_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PrivateFormat.PKCS8,
         encryption_algorithm=serialization.NoEncryption(),
     )
-    signed = approval_service.sign_approval(approval, private_key_pem)
+    signed = approval_service.sign_approval(approval, private_key_pem, key_id=key_id)
     public_key_pem = private_key.public_key().public_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PublicFormat.SubjectPublicKeyInfo,
     )
-    signed["public_key"] = public_key_pem.decode("ascii")
-    return signed
+    return signed, public_key_pem
 
 
 class TestSpecValidator(unittest.TestCase):
@@ -140,8 +138,8 @@ class TestSpecValidator(unittest.TestCase):
         path = write_temp(APPROVED_SPEC)
         try:
             fingerprint = hashlib.sha256(APPROVED_SPEC.encode("utf-8")).hexdigest()
-            approval = ed25519_signed_approval(fingerprint)
-            result = spec_validator.validate_spec(path, approval=approval)
+            approval, public_key_pem = ed25519_signed_approval(fingerprint)
+            result = spec_validator.validate_spec(path, approval=approval, public_key_pem=public_key_pem)
             self.assertTrue(result["document_valid"])
             self.assertTrue(result["requirements_valid"])
             self.assertTrue(result["approval_valid"])
@@ -161,9 +159,9 @@ class TestSpecValidator(unittest.TestCase):
         path = write_temp(APPROVED_SPEC)
         try:
             fingerprint = hashlib.sha256(APPROVED_SPEC.encode("utf-8")).hexdigest()
-            approval = ed25519_signed_approval(fingerprint)
+            approval, public_key_pem = ed25519_signed_approval(fingerprint)
             approval["fingerprint"] = "0" * 64
-            result = spec_validator.validate_spec(path, approval=approval)
+            result = spec_validator.validate_spec(path, approval=approval, public_key_pem=public_key_pem)
             self.assertFalse(result["approval_valid"])
             self.assertFalse(result["implementation_allowed"])
         finally:
@@ -173,9 +171,9 @@ class TestSpecValidator(unittest.TestCase):
         path = write_temp(APPROVED_SPEC)
         try:
             fingerprint = hashlib.sha256(APPROVED_SPEC.encode("utf-8")).hexdigest()
-            approval = ed25519_signed_approval(fingerprint)
+            approval, public_key_pem = ed25519_signed_approval(fingerprint)
             approval["revoked"] = True
-            result = spec_validator.validate_spec(path, approval=approval)
+            result = spec_validator.validate_spec(path, approval=approval, public_key_pem=public_key_pem)
             self.assertFalse(result["approval_valid"])
             self.assertFalse(result["implementation_allowed"])
         finally:
