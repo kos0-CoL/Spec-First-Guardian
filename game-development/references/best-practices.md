@@ -12,10 +12,17 @@ Recomendaciones para redactar especificaciones claras y mantenibles.
 
 ## Estados de una SPEC
 
-- `draft`: en elaboración.
-- `validated`: supervisada por validación.
-- `approved`: aprobada por el usuario humano.
-- `rejected`: rechazada con motivo.
+La única máquina de estados permitida es:
+
+- `DRAFT`
+- `UNDER_REVIEW`
+- `PENDING_USER_APPROVAL`
+- `APPROVED`
+- `REJECTED`
+- `SUPERSEDED`
+- `ARCHIVED`
+
+La transición a `APPROVED` requiere aprobación humana verificable.
 
 ## Mantenimiento
 
