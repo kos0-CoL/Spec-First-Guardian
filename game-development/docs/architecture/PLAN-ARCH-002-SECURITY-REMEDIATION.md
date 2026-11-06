@@ -2,23 +2,23 @@
 plan_id: PLAN-ARCH-002
 title: "Plan de remediación de hallazgos P1 de Etapa B"
 status: DRAFT
-version: 0.2.0
+version: 0.2.1
 author: "Buffy — borrador para revisión humana"
 created_at: "2026-11-06"
 base_commit: "d8a681c6226f89b123a2802b3aeb02b18f029368"
-supersedes: "0.1.0 (DRAFT)"
+supersedes: "0.2.0 (DRAFT)"
 spec: "SPEC-ARCH-002-SECURITY-REMEDIATION.md"
-spec_sha256: "b044327f56c9905ff9eddb97cbfbd9d8a600236904142e4534e34016c5f4de3e"
+spec_sha256: "e0001cab02922e832ba8bf30c139aa28719a78fbee8070f786e8a3e8681b8322"
 decisions: "DECISIONS-ARCH-002-SECURITY-REMEDIATION.md"
 ---
 
 # PLAN-ARCH-002 — Plan de remediación de hallazgos P1 de Etapa B
 
 **Estado:** DRAFT; no aprobado, no autoriza implementación ni producción.<br>
-**Versión:** 0.2.0; revisión documental que sustituye al borrador 0.1.0.<br>
+**Versión:** 0.2.1; revisión documental que sustituye al borrador 0.2.0.<br>
 **Fecha:** 2026-11-06<br>
 **Autor:** Buffy — propuesta de secuencia para revisión humana.<br>
-**SPEC de referencia:** `SPEC-ARCH-002-SECURITY-REMEDIATION.md`, versión 0.2.0, SHA-256 `b044327f56c9905ff9eddb97cbfbd9d8a600236904142e4534e34016c5f4de3e`.<br>
+**SPEC de referencia:** `SPEC-ARCH-002-SECURITY-REMEDIATION.md`, versión 0.2.1, SHA-256 `e0001cab02922e832ba8bf30c139aa28719a78fbee8070f786e8a3e8681b8322`.<br>
 **Registro de decisiones:** `DECISIONS-ARCH-002-SECURITY-REMEDIATION.md`; todas las decisiones permanecen pendientes.<br>
 **Baseline documental:** `d8a681c6226f89b123a2802b3aeb02b18f029368`; código auditado en `094f93d065cbbedce7d9ff35aeb862db92422476`.<br>
 **Autoridad documental:** este PLAN está subordinado a la SPEC-ARCH-002. No puede agregar requisitos, ampliar alcance, cambiar prioridades ni modificar criterios de aceptación. Si hay discrepancia, la SPEC gobierna y este PLAN debe corregirse.
@@ -27,7 +27,7 @@ decisions: "DECISIONS-ARCH-002-SECURITY-REMEDIATION.md"
 
 ## 1. Reglas de planificación
 
-- Ninguna tarea de implementación comienza sin aprobación explícita de la SPEC-ARCH-002 (texto, versión y hash) y de las decisiones D-01 a D-08 que correspondan.
+- Ninguna tarea de implementación comienza sin aprobación explícita de la SPEC-ARCH-002 (texto, versión y hash). La aprobación puede ser condicional si D-01 sigue pendiente; D-01 no bloquea esa aprobación condicional, pero impide declarar conformidad normativa completa. Cada tarea depende además de las decisiones específicas indicadas en §2.1.1, no de todas las D-xx.
 - Cada tarea debe mapear a un requisito RF-012…RF-016 y a un criterio AC-012…AC-018; una tarea sin trazabilidad no se ejecuta.
 - Las pruebas de regresión deben demostrar el defecto en el commit base antes de aceptar la corrección. Una prueba que pasa con el código defectuoso no demuestra la corrección.
 - No se relajan aserciones, no se omiten fallos y no se sustituyen pruebas de ambiente real por mocks.
@@ -39,20 +39,33 @@ decisions: "DECISIONS-ARCH-002-SECURITY-REMEDIATION.md"
 
 ## 2. Precondiciones y compuertas
 
-### 2.1 Compuerta G0 — Autoridad y decisiones
+### 2.1 Compuerta G0 — Autoridad global y alcance
+
+G0 es una compuerta global de autoridad, no una exigencia de resolver todas las decisiones técnicas.
 
 Antes de cualquier cambio:
 
-- Aprobar o rechazar la SPEC-ARCH-002 y registrar su SHA-256.
-- Resolver D-01: aprobación formal/hash de SPEC-ARCH-001; el archivo se declara DRAFT.
-- Resolver D-02 y D-03: disparador de invalidación y forma de reemisión del desafío.
-- Resolver D-04: política de grants históricos no correlacionados.
-- Resolver D-05: contrato de `--verify-storage`, `valid`/`ok` y compatibilidad de adaptadores. D-05 bloquea IMP-06/IMP-07, no IMP-03.
-- Resolver D-06: ubicación, durabilidad y límites de atomicidad del journal. D-06 bloquea IMP-01/IMP-04; no se confunde con el contrato de `valid` de D-05.
-- Resolver D-07: comportamiento ante datos existentes con huérfanas/no correlacionados.
-- Resolver D-08: confirmar el alcance AUD-01…AUD-05 más el ajuste mínimo anti-bypass del fallback; no incluye la remediación general de AUD-06.
+- Aprobar explícitamente `SPEC-ARCH-002-SECURITY-REMEDIATION.md` con texto, versión y hash. La aprobación **puede ser condicional** si D-01 sigue pendiente: autoriza la revisión/implementación condicionada a las demás compuertas, pero no aprueba SPEC-ARCH-001 ni permite declarar conformidad normativa completa. **D-01 no bloquea esta aprobación condicional.**
+- Confirmar el alcance AUD-01…AUD-05 más el ajuste mínimo anti-bypass del fallback. D-08 debe estar resuelta para fijar el alcance; no incluye la remediación general de AUD-06 ni P2/P3.
+- Mantener las restricciones globales: no OIDC, no producción, no tokens directos de agentes, no ampliación de AUD-06 ni P2/P3.
+- Verificar G1 antes de escribir código.
 
-Sin G0 no se escribe código. Las tareas de análisis y fixtures pueden prepararse en rama aislada, pero no se integran. Una tarea sólo puede comenzar cuando sus dependencias D-xx estén resueltas; las dependencias compartidas no bloquean innecesariamente tareas independientes (ver §3).
+Sin G0 no se escribe código. Las tareas de análisis y fixtures pueden prepararse en rama aislada, pero no se integran. Una tarea sólo puede comenzar cuando estén resueltas **sus** decisiones específicas; las decisiones pendientes de otras tareas no bloquean tareas independientes.
+
+#### 2.1.1 Decisiones específicas por tarea
+
+| Decisión | Bloquea | No bloquea |
+|---|---|---|
+| D-01 | Declarar conformidad normativa completa o cobertura total de requisitos heredados. | La aprobación condicional de SPEC-ARCH-002 y las tareas P1 que no invoquen conformidad completa. |
+| D-02 | La clasificación de binding/revisión, IMP-02, TST-01 y AC-012g en esa parte. | El mínimo obligatorio de autenticación/firma, el no-consumo de token incorrecto, el CAS y la prohibición de aprobar ante errores. |
+| D-03 | La política de reemisión, IMP-02 y TST-01. | Las tareas que no emiten ni reemiten desafíos. |
+| D-04 | IMP-05, MIG-02 y el cierre de AUD-04. | IMP-01/IMP-03 y el mínimo de no autorización de grants no correlacionados. |
+| D-05 | IMP-06, IMP-07 y DOC-03. | IMP-03 y las tareas de durabilidad/journal. |
+| D-06 | IMP-01, IMP-03, IMP-04 y MIG-01. | La documentación de límites y la detección conceptual. |
+| D-07 | La política de datos anómalos y el cierre operativo de IMP-04. | La detección, preservación de evidencia y bloqueo fail-closed ya exigidos. |
+| D-08 | G0 y la delimitación del alcance de todas las tareas. | Ninguna tarea puede ampliar alcance por su cuenta. |
+
+D-01 puede permanecer pendiente sin impedir G0 ni las tareas P1; sólo impide afirmar que la cobertura heredada es completa. Una tarea no comienza si una decisión de su fila sigue pendiente.
 
 ### 2.2 Compuerta G1 — Baseline reproducible
 
@@ -91,16 +104,17 @@ Dependencias obligatorias:
 - IMP-06 depende de IMP-01 a IMP-05 porque la verificación integral debe comprobar journal, correlación, salud y resultados.
 - IMP-07 depende de IMP-06 para fijar la semántica del CLI y de los adaptadores.
 - **OBS-04:** IMP-03 no depende de D-05. Su dependencia real es IMP-01 + D-06 (journal/durabilidad). D-05 sólo entra en IMP-06/IMP-07.
+- **OBS-08:** G0 no exige resolver D-01 ni todas las D-xx. D-01 sólo bloquea la declaración de conformidad completa; cada tarea respeta su fila de §2.1.1. Ninguna decisión pendiente autoriza a relajar una restricción global.
 - Las pruebas TST-01…TST-09 se escriben junto con cada tarea, pero la validación VAL-01…VAL-06 se ejecuta al final. TST-09 es la prueba documental de AC-017.
 
 ## 4. Tareas de implementación
 
 | ID | Tarea | Depende | Requisitos | Archivos candidatos (no exclusivos) | Salida |
 |---|---|---|---|---|---|
-| IMP-01 | Fundamento durable: versión de esquema, journal de operaciones, consulta de huérfanas, CAS de desafío y primitivas de salud/reconciliación. | G0/G1, D-06 | RF-012, RF-013, RF-016 | `scripts/authority_store.py`, posible módulo de journal, tests de store | Esquema y APIs internas versionadas; migración v1→v2; sin cambiar todavía el flujo de aprobación. |
-| IMP-02 | Invalidación del desafío tras fallo de autenticación/firma; CAS y evento durable; reemisión explícita; no aprobación falsa. | IMP-01, D-02/D-03 | RF-012 | `scripts/authority_service.py`, `scripts/authority_store.py`, tests de autoridad | Camino de fallo sin reutilización; token nuevo sólo por acción admin; concurrencia segura. |
+| IMP-01 | Fundamento durable: versión de esquema, journal de operaciones, consulta de huérfanas, CAS de desafío y primitivas de salud. No implementa resolución humana. | G0/G1, D-06 | RF-012, RF-013, RF-016 | `scripts/authority_store.py`, posible módulo de journal, tests de store | Esquema y APIs internas versionadas; migración v1→v2; sin cambiar todavía el flujo de aprobación. |
+| IMP-02 | Invalidación del desafío tras rechazo definitivo de autenticación/firma; CAS y evento durable; política de binding según D-02; reemisión explícita; no aprobación falsa. | IMP-01, D-02/D-03 | RF-012 | `scripts/authority_service.py`, `scripts/authority_store.py`, tests de autoridad | Camino de fallo definitivo sin reutilización; binding según la decisión aprobada; token nuevo sólo por acción admin; concurrencia segura. |
 | IMP-03 | Propagación de errores de fsync de archivo/directorio; estados `NOT_EXECUTED`, `EXECUTED_NOT_DURABLE`, `DURABILITY_CONFIRMED`, `INDETERMINATE`; recibo de durabilidad. | IMP-01, D-06 | RF-014 | `scripts/safe_fs.py`, `scripts/implementation_gate.py`, tests de fs | Ningún `fsync` silenciado; resultado veraz por operación; no depende del contrato CLI de D-05. |
-| IMP-04 | Journal en el gate: intención antes del efecto, resultado después, detección al arrancar, bloqueo por huérfana y reconciliación ligada a la operación. | IMP-01, IMP-03, D-06 | RF-013, RF-014 | `scripts/implementation_gate.py`, `scripts/authority_service.py`, `scripts/authority_store.py`, tests de gate | Caída entre intención y resultado deja bloqueo persistente; no reejecución automática. |
+| IMP-04 | Journal en el gate: intención antes del efecto, resultado después, detección al arrancar, bloqueo persistente, inspección de sólo lectura y preservación de evidencia. No implementa ni simula reconciliación humana. | IMP-01, IMP-03, D-06, D-07 | RF-013, RF-014 | `scripts/implementation_gate.py`, `scripts/authority_service.py`, `scripts/authority_store.py`, tests de gate | Caída entre intención y resultado deja bloqueo persistente; la huérfana no se resuelve, borra ni reejecuta; no se promete reconciliación. |
 | IMP-05 | Migración con correlación grant↔evento `approval`; aborto o cuarentena no autorizable según D-04; guard de paridad en `_load_bundle`/fallback; grants históricos no autorizables si no verifican. | IMP-01, D-04 | RF-015 | `scripts/authority_store.py`, `scripts/authority_service.py`, CLI de migración, tests de migración y fallback | Migración válida idempotente; fallo sin cambios parciales; originales intactos; fallback no autoriza grants no correlacionados/cuarentenados. |
 | IMP-06 | Verificación integral del store: cadena, salud, esquema, migración, solicitudes, grants/firmas, correlación, replay, cuarentena y huérfanas; salida separada y fail-closed. | IMP-01…IMP-05, D-05 | RF-016 | `scripts/authority_store.py`, `scripts/authority_service.py`, tests de verificación | `ok`/`valid` veraces; `chain_valid` separado; exit code 0/2; sin mutaciones. |
 | IMP-07 | Adaptación del CLI y contratos de adaptadores a la semántica fail-closed y a los nuevos campos; no habilitar OIDC. | IMP-06, D-05 | RF-012…RF-016 | `scripts/authority_service.py`, `scripts/enforce.py`, `scripts/authority_client.py`, docs de contrato | Clientes y operadores reciben estados veraces; compatibilidad documentada. |
@@ -110,6 +124,7 @@ Dependencias obligatorias:
 - IMP-01 puede elegir tabla de journal, eventos enriquecidos o journal separado, pero debe cumplir RF-013 y D-06; no se prescribe aquí la estructura física.
 - IMP-02 no debe confundir “token incorrecto” con “token válido que falló autenticación”; RF-012.4 es obligatorio.
 - IMP-03 no debe revertir automáticamente una operación ya visible; RF-014.7.
+- IMP-04 no debe implementar, inventar ni simular una resolución administrativa de huérfanas. Sólo detecta, preserva, bloquea e inspecciona en modo de sólo lectura; la resolución requiere un mecanismo autorizado que no existe en esta misión. RF-013.11–RF-013.12, AC-013b.
 - IMP-05 no debe inventar eventos ni aceptar correlación por posición; RF-015.2. Debe probar el fallback tanto con grant ausente en el store como con grant en cuarentena; RF-015.7–RF-015.9.
 - IMP-06 no debe marcar salud ni migrar durante la verificación; RF-016.4.
 
@@ -117,8 +132,8 @@ Dependencias obligatorias:
 
 | ID | Cobertura | Casos mínimos | Requisitos | Compuerta |
 |---|---|---|---|---|
-| TST-01 | Desafío | Fallo real de auth/firma (identidad no confirmada/proveedor); no `APPROVED`; token anterior rechazado; token nuevo aceptado; token incorrecto no consume; `SETUP_INCOMPLETE` no consume; timeout/red/`5xx` no consume; firmante no disponible no consume; binding divergente consume; carrera de dos intentos. | RF-012, AC-012 | G3 |
-| TST-02 | Journal | Fallo antes de intención; intención sin efecto; efecto sin resultado; resultado durable; huérfana al reiniciar; resolución humana bloqueada sin mecanismo; duplicado. | RF-013, AC-013 | G2 |
+| TST-01 | Desafío | Fallo real de auth/firma (identidad no confirmada/proveedor); no `APPROVED`; token anterior rechazado; token nuevo aceptado; token incorrecto no consume; `SETUP_INCOMPLETE` no consume; timeout/red/`5xx` no consume; firmante no disponible no consume; binding/revisión se prueba según la opción D-02 aprobada (sin marcarla PASS si D-02 está pendiente); carrera de dos intentos. | RF-012, AC-012 | G3 |
+| TST-02 | Journal | Fallo antes de intención; intención sin efecto; efecto sin resultado; resultado durable; huérfana al reiniciar; `reconcile` no resuelve sin mecanismo; inspección de sólo lectura; preservación de evidencia; duplicado. | RF-013, AC-013 | G2 |
 | TST-03 | Durabilidad | Inyección de `OSError` en fsync de archivo/directorio para las cuatro operaciones; rename/unlink fallido; limpieza fallida. | RF-014, AC-014 | G3 |
 | TST-04 | Migración y fallback | Grant sin evento; evento de otra solicitud; campos divergentes; firma inválida; cadena válida; idempotencia; originales intactos; rollback/cuarentena; fallback con grant no correlacionado/cuarentenado no autoriza. | RF-015, AC-015 | G4 |
 | TST-05 | Verificación | Solicitud/grant manipulados; firma inválida; evento faltante; salud bloqueada; migración inconsistente; cuarentena; store válido; read-only; `valid==ok`; exit 0/2. | RF-016, AC-016 | G5 |
@@ -151,7 +166,7 @@ La migración no se ejecuta sobre datos reales en esta fase. Cualquier cambio de
 | ID | Tarea | Depende | Requisitos | Salida |
 |---|---|---|---|---|
 | DOC-01 | Documentar el comportamiento nuevo de desafío, journal, durabilidad, migración y verificación; alinear afirmaciones afectadas, sin declarar cerrado AUD-15 ni ampliar a P3. | IMP-02…IMP-06 | RF-012…RF-016 | README/instrucciones/docstrings coherentes; sin tocar SPEC-ARCH-001. |
-| DOC-02 | Runbook de recuperación: preservar evidencia, resolver huérfanas, reconciliar con reautenticación, no reejecutar, verificar y reiniciar. | IMP-04/MIG-03 | RF-013, RF-014 | Procedimiento operativo con límites y rollback. |
+| DOC-02 | Runbook limitado: detectar y preservar evidencia, mantener el bloqueo, definir inspecciones de sólo lectura permitidas, negar reejecución y explicar que no se puede resolver una huérfana sin un mecanismo administrativo autorizado. Debe indicar la condición futura que habilitaría esa resolución, sin implementarla. | IMP-04/MIG-03 | RF-013, RF-014 | Procedimiento operativo con límites, bloqueo y rollback; sin promesa de reconciliación. |
 | DOC-03 | Contrato CLI/adaptadores: campos, exit codes, compatibilidad y semántica de `valid`/`ok`/`durability`. | IMP-06/IMP-07, D-05 | RF-016 | Documento de contrato y ejemplos de salida. |
 | DOC-04 | Informe de trazabilidad final: AUD→RF→AC→prueba→evidencia y omisiones. | VAL-01…VAL-06 | AC-012…AC-018 | Informe reproducible adjunto al cierre. |
 
@@ -176,7 +191,7 @@ DOC-01 no debe convertir AUD-06 a AUD-17 en parte del alcance; sólo documenta l
 | F1 | IMP-01 + TST-02/TST-05 parciales: fundamento de store/journal/salud y migración de esquema. | Esquema versionado, APIs, tests de base. | K1 |
 | F2 | IMP-02 + TST-01/TST-06: desafío de un solo uso y carrera. | Camino AUD-01 corregido. | K2 |
 | F3 | IMP-03 + TST-03: fsync y recibos de durabilidad. | Camino AUD-03 corregido. | K3 |
-| F4 | IMP-04 + TST-02/TST-06: journal, huérfanas, reconciliación. | Camino AUD-02 corregido. | K4 |
+| F4 | IMP-04 + TST-02/TST-06: journal, detección de huérfanas, bloqueo e inspección. | AUD-02 mitigado; resolución humana pendiente de mecanismo autorizado. | K4 |
 | F5 | IMP-05 + MIG-01/MIG-02/TST-04: correlación y migración. | Camino AUD-04 corregido. | K5 |
 | F6 | IMP-06 + TST-05: verificación integral y CLI. | Camino AUD-05 corregido. | K6 |
 | F7 | IMP-07 + DOC-01…DOC-03: compatibilidad, adaptadores y runbook. | Contrato y documentación. | K7 |
@@ -196,7 +211,7 @@ Cada checkpoint debe registrar:
 - Fixtures/hashes de bases y archivos legacy.
 - Estados de salud, eventos, recibos de durabilidad y exit codes.
 - Pruebas omitidas, bloqueadas o no concluyentes, con motivo.
-- Decisión humana aplicada (D-01…D-08) y su registro.
+- Decisiones específicas aplicadas y su registro; D-01 puede seguir pendiente si el checkpoint no declara conformidad normativa completa.
 
 Un checkpoint no se cierra por “la suite pasó”; requiere que el criterio específico y su control negativo estén demostrados.
 
@@ -205,9 +220,9 @@ Un checkpoint no se cierra por “la suite pasó”; requiere que el criterio es
 - **Código:** revertir el cambio de código no debe borrar la base, el journal, los eventos de fallo ni los datos históricos.
 - **Esquema:** no se permite un downgrade que abra una base nueva y la declare válida ignorando campos de seguridad. Si el lector anterior no puede interpretar el esquema, debe negarse a operar.
 - **Migración:** antes de migrar, backup verificado y restauración probada en copia. Un fallo deja la base original intacta; no se reintenta sobre datos parciales.
-- **Journal:** las intenciones y resultados se preservan; no se borran para “desbloquear”. La recuperación usa reconciliación, no limpieza.
-- **Salud:** no se resetea a `HEALTHY` sin evidencia y evento de reconciliación.
-- **Archivos del workspace:** no se revierten automáticamente; una operación indeterminada se resuelve con evidencia humana.
+- **Journal:** las intenciones y resultados se preservan; no se borran para “desbloquear”. La inspección es de sólo lectura; si no existe un mecanismo administrativo autorizado, la huérfana permanece bloqueada y no se simula reconciliación.
+- **Salud:** no se resetea a `HEALTHY` sin evidencia y evento de reconciliación emitido por un mecanismo autorizado; si no existe, no se desbloquea.
+- **Archivos del workspace:** no se revierten automáticamente; una operación indeterminada sólo puede resolverse mediante un mecanismo autorizado con evidencia humana. Si no existe, permanece bloqueada.
 - **Documentación:** los documentos nuevos son DRAFT hasta aprobación; un rollback documental no borra el expediente de auditoría.
 
 ## 12. Fuera de alcance del PLAN
@@ -218,15 +233,16 @@ Un checkpoint no se cierra por “la suite pasó”; requiere que el criterio es
 - Reescribir SPEC-ARCH-001 o cambiar sus estados.
 - Cambiar la arquitectura de permisos, criptografía o transporte.
 - Reparar datos históricos sin política aprobada.
+- Implementar, inventar o simular un mecanismo de reconciliación humana de huérfanas; DOC-02 sólo documenta el bloqueo y la condición futura.
 - Añadir nuevas funciones de producto, plataforma o multi-tenant.
 
 ## 13. Condición de inicio
 
 Este PLAN no se ejecuta hasta que el usuario apruebe explícitamente:
 
-1. `SPEC-ARCH-002-SECURITY-REMEDIATION.md`, versión 0.2.0 y hash `b044327f56c9905ff9eddb97cbfbd9d8a600236904142e4534e34016c5f4de3e`;
-2. las decisiones D-01 a D-08 aplicables;
+1. `SPEC-ARCH-002-SECURITY-REMEDIATION.md`, versión 0.2.1 y hash `e0001cab02922e832ba8bf30c139aa28719a78fbee8070f786e8a3e8681b8322`;
+2. las decisiones específicas de §2.1.1 aplicables a cada tarea; D-01 puede seguir pendiente si la aprobación de la SPEC es explícitamente condicional;
 3. el alcance estricto de los cinco P1 más el ajuste mínimo anti-bypass del fallback;
 4. la exclusión de OIDC, producción y correcciones P2/P3 no autorizadas, incluida la remediación general de AUD-06.
 
-Hasta entonces, este PLAN es sólo una propuesta y no autoriza cambios.
+La aprobación condicional de SPEC-ARCH-002 no es aprobación de SPEC-ARCH-001 ni permite declarar conformidad normativa completa. Hasta que exista esa aprobación y se cumplan las compuertas, este PLAN es sólo una propuesta y no autoriza cambios.

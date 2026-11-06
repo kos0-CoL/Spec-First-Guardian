@@ -2,22 +2,23 @@
 document_id: DECISIONS-ARCH-002
 title: "Registro de decisiones de la remediación P1 de Etapa B"
 status: DRAFT
-version: 0.1.0
+version: 0.1.1
 author: "Buffy — borrador para revisión humana"
 created_at: "2026-11-06"
 base_commit: "d8a681c6226f89b123a2802b3aeb02b18f029368"
 spec: "SPEC-ARCH-002-SECURITY-REMEDIATION.md"
-spec_version: "0.2.0"
-spec_sha256: "b044327f56c9905ff9eddb97cbfbd9d8a600236904142e4534e34016c5f4de3e"
+spec_version: "0.2.1"
+spec_sha256: "e0001cab02922e832ba8bf30c139aa28719a78fbee8070f786e8a3e8681b8322"
 plan: "PLAN-ARCH-002-SECURITY-REMEDIATION.md"
 ---
 
 # DECISIONS-ARCH-002 — Decisiones pendientes de la remediación P1
 
 **Estado:** DRAFT; no aprobado, no autoriza implementación ni producción.<br>
+**Versión:** 0.1.1; revisión documental que sustituye al borrador 0.1.0.<br>
 **Fecha:** 2026-11-06<br>
 **Autor:** Buffy — análisis para revisión humana.<br>
-**SPEC de referencia:** `SPEC-ARCH-002-SECURITY-REMEDIATION.md`, versión 0.2.0, SHA-256 `b044327f56c9905ff9eddb97cbfbd9d8a600236904142e4534e34016c5f4de3e`.<br>
+**SPEC de referencia:** `SPEC-ARCH-002-SECURITY-REMEDIATION.md`, versión 0.2.1, SHA-256 `e0001cab02922e832ba8bf30c139aa28719a78fbee8070f786e8a3e8681b8322`.<br>
 **Baseline documental:** `d8a681c6226f89b123a2802b3aeb02b18f029368`; código auditado `094f93d065cbbedce7d9ff35aeb862db92422476`.<br>
 **Autoridad:** sólo el usuario puede aprobar una decisión. Este documento no cambia estados, no implementa, no firma y no convierte una recomendación en norma.
 
@@ -31,8 +32,8 @@ plan: "PLAN-ARCH-002-SECURITY-REMEDIATION.md"
 
 | ID | Tema | Estado | Recomendación | Bloquea |
 |---|---|---|---|---|
-| D-01 | Autoridad formal de SPEC-ARCH-001 | PENDING USER DECISION | Mantener cobertura condicional y no declarar aprobación | Aprobación de la SPEC-002 |
-| D-02 | Clasificación de fallos y consumo del desafío | PENDING USER DECISION | Rechazo definitivo de auth/binding; transitorios no consumen | RF-012/AC-012 |
+| D-01 | Autoridad formal de SPEC-ARCH-001 | PENDING USER DECISION | Mantener DRAFT; permitir aprobación condicional de SPEC-002; no declarar conformidad completa | Conformidad normativa completa; no la aprobación condicional de SPEC-002 |
+| D-02 | Clasificación de fallos y consumo del desafío | PENDING USER DECISION | Auth/firma obligatorio; binding según D-02-b, pendiente | Clasificación de binding/revisión y AC-012g; no el mínimo de auth/firma |
 | D-03 | Reemisión del desafío | PENDING USER DECISION | Misma solicitud por defecto; nueva si cambia alcance/expira | RF-012.6 |
 | D-04 | Grants históricos y fallback | PENDING USER DECISION | Cuarentena + bloqueo + re-aprobación; paridad de fallback | RF-015/MIG |
 | D-05 | Contrato de verificación | PENDING USER DECISION | `valid=ok`; `chain_valid` separado; exit 0/2 | RF-016/AC-016 |
@@ -42,7 +43,11 @@ plan: "PLAN-ARCH-002-SECURITY-REMEDIATION.md"
 
 ## 1. D-01 — Autoridad formal de SPEC-ARCH-001
 
-**Problema.** La misión presenta SPEC-ARCH-001 como referencia, pero el archivo examinado se autodeclara `DRAFT` y “no aprobada”. Sin una aprobación formal no puede afirmarse que todos sus requisitos sean baseline normativo de esta SPEC.
+**Problema.** La misión presenta SPEC-ARCH-001 como referencia, pero el archivo examinado se autodeclara `DRAFT` y “no aprobada”. Sin una aprobación formal no puede afirmarse que todos sus requisitos sean baseline normativo de esta SPEC. Esta decisión separa tres actos distintos:
+
+1. **Aprobar condicionalmente SPEC-ARCH-002.** Autoriza el texto, versión y hash de esta SPEC, dejando D-01 pendiente; no declara conformidad completa.
+2. **Aprobar SPEC-ARCH-001.** Acto separado sobre su texto, versión y hash; no se infiere del anterior.
+3. **Declarar conformidad normativa completa.** Exige baseline heredado aprobado y trazado; sólo es posible si D-01 se resuelve.
 
 **Evidencia examinada.**
 
@@ -55,10 +60,10 @@ plan: "PLAN-ARCH-002-SECURITY-REMEDIATION.md"
 **Alternativas.**
 
 1. **Aprobar formalmente SPEC-ARCH-001**: el usuario registra autorización explícita sobre versión y hash, y actualiza su estado por el procedimiento oficial. Esta misión no puede hacerlo.
-2. **Mantener DRAFT y tratar la SPEC-002 como propuesta condicional** (recomendada): se usan los requisitos citados como referencia de trabajo, sin declarar que la SPEC-001 está aprobada ni que la cobertura es completa.
+2. **Mantener DRAFT y permitir la aprobación condicional de SPEC-002** (recomendada): se usan los requisitos citados como referencia de trabajo, se puede aprobar explícitamente SPEC-002 con esa condición, y no se declara que la SPEC-001 está aprobada ni que la cobertura es completa.
 3. **Sustituir el baseline** por una nueva SPEC aprobada: obliga a rehacer la trazabilidad y no es necesario para esta revisión.
 
-**Consecuencias funcionales.** La opción 2 permite revisar y aprobar SPEC-002 con una nota de condicionalidad; no impide implementar después si el usuario aprueba ambas. La opción 1 desbloquea la cobertura normativa, pero exige una decisión separada y no debe simularse.
+**Consecuencias funcionales.** La opción 2 permite revisar y **aprobar condicionalmente SPEC-002** con una nota de D-01; no impide implementar después si se cumplen las demás compuertas y no exige aprobar antes SPEC-ARCH-001. La opción 1 desbloquea la cobertura normativa completa, pero exige una decisión separada y no debe simularse.
 
 **Consecuencias de seguridad.** Declarar aprobada una SPEC que no lo está crearía una falsa assurance sobre todas las invariantes heredadas. La cobertura condicional es más honesta y mantiene el fail-closed documental.
 
@@ -66,11 +71,11 @@ plan: "PLAN-ARCH-002-SECURITY-REMEDIATION.md"
 
 **Riesgos residuales.** La falta de baseline formal puede producir discrepancias entre requisitos heredados y la SPEC-002. La opción 2 deja abierta la pregunta de qué RF de SPEC-ARCH-001 son obligatorios; se mitiga citando sólo los que la misión y la auditoría identifican y manteniendo D-01 visible.
 
-**Recomendación.** Opción 2: mantener D-01 pendiente, no modificar SPEC-ARCH-001 y no declarar cobertura normativa completa. Si el usuario afirma que existe aprobación, debe aportar el artefacto, versión y hash; una afirmación verbal en la misión no sustituye el registro.
+**Recomendación.** Opción 2: mantener D-01 pendiente, no modificar SPEC-ARCH-001, permitir la aprobación condicional de SPEC-002 y no declarar cobertura normativa completa. Si el usuario afirma que existe aprobación de la SPEC-001, debe aportar el artefacto, versión y hash; una afirmación verbal no sustituye el registro.
 
-**Decisión requerida.** El usuario debe elegir (1) aprobar formalmente la SPEC-001 con hash y alcance, o (2) mantenerla DRAFT y aceptar que la SPEC-002 es condicional. No se debe marcar RESOLVED sin el artefacto correspondiente.
+**Decisión requerida.** El usuario debe elegir (1) aprobar formalmente SPEC-ARCH-001 con hash y alcance, o (2) mantenerla DRAFT y aceptar que SPEC-ARCH-002 se aprueba, si se decide, de forma condicional. **D-01 no bloquea la aprobación condicional de SPEC-002**; sólo bloquea declarar conformidad normativa completa. No se debe marcar RESOLVED sin el artefacto correspondiente.
 
-**RF/AC afectados.** §15.1 y §15.3 de la SPEC; cobertura de todos los RF heredados; condición de aprobación §18. No cambia RF-012…RF-016.
+**RF/AC afectados.** §4.2, §15.1 y §15.3 de la SPEC; cobertura de todos los RF heredados; condición de aprobación §18; G0 del PLAN. No cambia RF-012…RF-016.
 
 ## 2. D-02 — Invalidación de desafíos y clasificación de fallos
 
@@ -82,7 +87,7 @@ plan: "PLAN-ARCH-002-SECURITY-REMEDIATION.md"
 |---|---|---|---|
 | Sin posesión / token incorrecto | hash distinto, token ausente, formato no interpretable, solicitud inexistente | No | No |
 | Rechazo definitivo de autenticación | firma/claims/subject/nonce/issuer/audience/exp/iat/auth_time inválidos, replay, denegación explícita | Sí, permanentemente | No |
-| Rechazo definitivo de binding/revisión | `state`, sesión, PKCE, fingerprint, scope o revisión divergentes tras posesión | Sí, permanentemente (recomendado) | No |
+| Rechazo definitivo de binding/revisión | `state`, sesión, PKCE, fingerprint, scope o revisión divergentes tras posesión | **Pendiente D-02:** si se clasifica como definitivo, sí; si no, no se presume | No, en cualquier opción |
 | Firma producida no verificable | firma criptográficamente inválida o no corresponde al contenido | Sí, permanentemente | No |
 | Error transitorio | timeout, red, `5xx`, indisponibilidad, rate limit sin respuesta definitiva | No; backoff y límite de reintentos | No |
 | Error de configuración | `SETUP_INCOMPLETE`, proveedor/callback/trust store no configurado | No | No |
@@ -91,7 +96,7 @@ plan: "PLAN-ARCH-002-SECURITY-REMEDIATION.md"
 
 **Alternativas.**
 
-- **A. Sólo autenticación/firma invalida.** Reduce la fricción, pero permite reutilizar un token tras un fallo de `state`/sesión/scope que también es definitivo. No recomendada como política completa.
+- **A. Sólo autenticación/firma invalida.** Reduce la fricción, pero permite reutilizar un token tras un fallo de `state`/sesión/scope que también es definitivo. Bajo A, esa divergencia no se clasifica como rechazo definitivo; aun así no puede aprobar ni emitir grant. No recomendada como política completa.
 - **B. Todo rechazo definitivo posterior a la posesión invalida; transitorios/configuración no** (recomendada). Separa la naturaleza del fallo y evita tanto replay como DoS por indisponibilidad.
 - **C. Rotación automática ante cualquier error.** Genera desafíos nuevos sin intervención, aumenta la superficie y puede convertir un fallo transitorio en una carrera; no recomendada.
 
@@ -103,11 +108,11 @@ plan: "PLAN-ARCH-002-SECURITY-REMEDIATION.md"
 
 **Riesgos residuales.** Un tercero con el token puede provocar un rechazo definitivo y forzar reemisión; es el coste de no permitir replay. La indisponibilidad prolongada puede impedir aprobar hasta que expire el desafío; no se convierte en aprobación. El límite exacto de reintentos y backoff debe fijarse en la implementación aprobada.
 
-**Recomendación.** Opción B. Los fallos transitorios no consumen; los rechazos definitivos de autenticación, binding, revisión y firma sí. `SETUP_INCOMPLETE` nunca consume. El commit ambiguo bloquea y no se reintenta.
+**Recomendación.** Opción B. El rechazo definitivo de autenticación/firma es obligatorio; la inclusión de binding/revisión como rechazo definitivo es la recomendación D-02-b, todavía no aprobada. Los fallos transitorios no consumen; `SETUP_INCOMPLETE` nunca consume; un token incorrecto no consume un desafío válido; el commit ambiguo bloquea y no se reintenta; el CAS impide carreras y dobles aprobaciones. Ningún error aprueba ni emite grant.
 
-**Decisión requerida.** El usuario debe aprobar la tabla de clasificación, en particular si los fallos de `state`/sesión/scope/revisión consumen (B) o no (A), y el límite de reintentos transitorios. Sin esta decisión, RF-012 no está cerrado.
+**Decisión requerida.** El usuario debe aprobar la tabla de clasificación y determinar expresamente si los rechazos definitivos de binding/revisión invalidan el desafío (B) o no (A), además del límite de reintentos transitorios. RF-012.2 y el mínimo de autenticación/firma no dependen de esa decisión; la prueba AC-012g y la parte de binding de IMP-02/TST-01 no pueden cerrarse mientras D-02 siga pendiente.
 
-**RF/AC afectados.** RF-012.1–RF-012.11; AC-012a–AC-012h; RF-012.9/AC-012e (transitorios); RF-012.10; riesgos §16.3.
+**RF/AC afectados.** RF-012.1–RF-012.2a, RF-012.3–RF-012.11; AC-012a–AC-012h, en particular AC-012g; RF-012.9/AC-012e (transitorios); RF-012.10; riesgos §16.3.
 
 ## 3. D-03 — Reemisión del desafío
 
@@ -330,7 +335,7 @@ plan: "PLAN-ARCH-002-SECURITY-REMEDIATION.md"
 
 **Hallazgo.** `authority_service.reconcile` exige UID administrador y `_admin_identity`; en producción `_approval_event` sigue denegando por `SETUP_INCOMPLETE`, y la prueba de reconciliación usa identidad simulada. Además, `reconcile` limpia una auditoría incompleta; no resuelve una intención huérfana ni aporta evidencia del target.
 
-**Respuesta.** RF-013.11–RF-013.12 exigen un mecanismo autorizado con identidad humana reautenticada y evidencia; si no existe, la resolución permanece bloqueada. No se inventa un mecanismo ni se acepta una firma del agente. AC-013b prueba que `reconcile` genérico no resuelve la huérfana.
+**Respuesta.** RF-013.11–RF-013.12 exigen un mecanismo autorizado con identidad humana reautenticada y evidencia; si no existe, la resolución permanece bloqueada. No se inventa un mecanismo ni se acepta una firma del agente. AC-013b prueba que `reconcile` genérico no resuelve la huérfana y que el bloqueo, la inspección de sólo lectura y la preservación de evidencia siguen funcionando. IMP-04 y DOC-02 se limitan a esa capacidad; AUD-02 no se declara completamente cerrado.
 
 **Límite.** La reconciliación de operaciones huérfanas no puede implementarse hasta que el usuario autorice un mecanismo; el bloqueo es el resultado correcto, no un defecto a ocultar.
 
@@ -342,12 +347,44 @@ plan: "PLAN-ARCH-002-SECURITY-REMEDIATION.md"
 
 **Límite.** TST-09 es una prueba planificada, no ejecutada en esta misión documental; no se declara PASS.
 
+### OBS-05 — Aprobación condicional y D-01
+
+**Estado:** RESUELTO DOCUMENTALMENTE.
+
+**Corrección.** Se separaron tres actos: aprobar condicionalmente SPEC-ARCH-002, aprobar SPEC-ARCH-001 y declarar conformidad normativa completa. D-01 ya no bloquea la aprobación condicional de SPEC-002; sólo impide declarar cobertura completa de requisitos heredados. SPEC-ARCH-001 permanece DRAFT y sin cambios de contenido, versión, estado ni hash.
+
+**Límite.** D-01 sigue PENDING USER DECISION y la aprobación de SPEC-ARCH-002 sigue siendo una decisión humana separada.
+
+### OBS-06 — RF-012.2 y D-02
+
+**Estado:** RESUELTO DOCUMENTALMENTE.
+
+**Corrección.** RF-012.2 hace obligatorio el rechazo definitivo de autenticación/firma, pero no presenta binding/revisión como obligatorio: RF-012.2a remite expresamente a D-02 y AC-012g/TST-01 no pueden marcarse PASS mientras esa decisión esté pendiente. Se mantienen el no-consumo de token incorrecto, la no aprobación ante errores, el CAS y la prohibición de reutilizar cualquier supuesto clasificado como rechazo definitivo.
+
+**Límite.** D-02 sigue PENDING USER DECISION; no se habilita OIDC ni se aceptan tokens directos de agentes.
+
+### OBS-07 — Reconciliación limitada en el PLAN
+
+**Estado:** RESUELTO DOCUMENTALMENTE; implementación no autorizada.
+
+**Corrección.** IMP-04 sólo implementa journal, detección, bloqueo persistente, inspección de sólo lectura y preservación de evidencia. DOC-02 documenta esos límites y la condición futura para una resolución autorizada, no una capacidad existente. AC-013b demuestra que sin mecanismo la huérfana permanece bloqueada y no se simula reconciliación.
+
+**Límite.** AUD-02 no se declara completamente cerrado mientras falte esa capacidad administrativa.
+
+### OBS-08 — Compuertas del PLAN
+
+**Estado:** RESUELTO DOCUMENTALMENTE.
+
+**Corrección.** G0 queda como compuerta global de autoridad, aprobación de SPEC y alcance; las decisiones técnicas se asignan por tarea en §2.1.1 y en el diagrama de dependencias. D-01 no bloquea la aprobación condicional ni las tareas P1; una decisión sólo bloquea las tareas que dependen de ella. Se mantiene que ninguna tarea empieza sin aprobación explícita de la SPEC y sin sus decisiones específicas.
+
+**Límite.** Las compuertas descritas no se ejecutan ni se declaran cumplidas en esta revisión documental.
+
 ## 10. Matriz de decisiones y trazabilidad
 
 | Decisión | RF | AC | Tarea del PLAN | Estado |
 |---|---|---|---|---|
-| D-01 | Cobertura heredada | §15.1/§18 | G0 | PENDING |
-| D-02 | RF-012 | AC-012a–h | IMP-02/TST-01 | PENDING |
+| D-01 | Cobertura heredada | §4.2/§15.1/§18 | G0 condicional | PENDING |
+| D-02 | RF-012 | AC-012a–h; AC-012g pendiente | IMP-02/TST-01 | PENDING |
 | D-03 | RF-012.6 | AC-012b | IMP-02/TST-01 | PENDING |
 | D-04 | RF-015 | AC-015a–e | IMP-05/MIG-02/TST-04 | PENDING |
 | D-05 | RF-016 | AC-016a–d | IMP-06/IMP-07/TST-05 | PENDING |
@@ -357,15 +394,17 @@ plan: "PLAN-ARCH-002-SECURITY-REMEDIATION.md"
 
 ## 11. Riesgos residuales del registro
 
-1. **D-01:** sin aprobación formal, la cobertura de la SPEC-001 es condicional y puede discutirse.
+1. **D-01:** sin aprobación formal, la cobertura de la SPEC-001 es condicional y puede discutirse; esto no impide aprobar condicionalmente SPEC-002, pero impide declarar conformidad completa.
 2. **D-04/OBS-01:** la paridad de verificación reduce el bypass, pero el fallback sigue siendo una fuente fuera del store; AUD-06 permanece.
 3. **OBS-03:** no hay mecanismo de producción demostrado para reconciliar huérfanas; el bloqueo puede ser permanente.
 4. **D-05:** consumidores que ignoran `ok`/`valid` pueden seguir interpretando mal la salida; la compatibilidad no es una garantía de uso correcto.
 5. **D-06:** la atomicidad SQLite↔filesystem no existe; la ventana indeterminada requiere reconciliación humana.
-6. **D-02:** la política estricta puede facilitar denegación de servicio si un tercero posee el token; es el coste de impedir replay.
+6. **D-02:** la política estricta puede facilitar denegación de servicio si un tercero posee el token; es el coste de impedir replay. La clasificación de binding/revisión sigue pendiente.
+7. **OBS-07:** sin mecanismo administrativo autorizado, la resolución de huérfanas no está disponible; el bloqueo puede ser permanente y no se simula una salida.
+8. **OBS-08:** las compuertas y la matriz de decisiones son documentales; no se declaran verificadas ni ejecutadas hasta la implementación autorizada.
 
 ## 12. Condición de cierre documental
 
 Este registro queda en **DRAFT**. Ninguna decisión está aprobada. No se implementa, no se firma, no se modifica SPEC-ARCH-001 y no se declara producción habilitada. El usuario debe revisar las recomendaciones y emitir una autorización explícita por decisión, indicando la alternativa elegida y el hash de la SPEC-002 resultante.
 
-Hasta entonces, las opciones descritas son propuestas y los estados de todas las D-01…D-08 son `PENDING USER DECISION`.
+La aprobación condicional de SPEC-ARCH-002 sigue siendo un acto separado y no aprueba SPEC-ARCH-001. Hasta entonces, las opciones descritas son propuestas y los estados de todas las D-01…D-08 son `PENDING USER DECISION`.

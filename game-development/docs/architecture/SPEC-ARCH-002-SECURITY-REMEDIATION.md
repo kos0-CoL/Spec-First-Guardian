@@ -2,11 +2,11 @@
 spec_id: SPEC-ARCH-002
 title: "Remediación de hallazgos P1 de Etapa B"
 status: DRAFT
-version: 0.2.0
+version: 0.2.1
 author: "Buffy — borrador para revisión humana"
 created_at: "2026-11-06"
 base_commit: "d8a681c6226f89b123a2802b3aeb02b18f029368"
-supersedes: "0.1.0 (DRAFT)"
+supersedes: "0.2.0 (DRAFT)"
 parent_spec: "SPEC-ARCH-001-HARDENING.md"
 parent_spec_sha256: "77f3afbb113df0a0a2c6b75755281a8305e85caa3e0cd0e68bc9694dc26c4cda"
 decisions: "DECISIONS-ARCH-002-SECURITY-REMEDIATION.md"
@@ -15,7 +15,7 @@ decisions: "DECISIONS-ARCH-002-SECURITY-REMEDIATION.md"
 # SPEC-ARCH-002 — Remediación de hallazgos P1 de Etapa B
 
 **Estado:** DRAFT; no aprobada, no autoriza implementación ni producción.<br>
-**Versión:** 0.2.0; revisión documental que sustituye al borrador 0.1.0.<br>
+**Versión:** 0.2.1; revisión documental que sustituye al borrador 0.2.0.<br>
 **Fecha:** 2026-11-06<br>
 **Autor:** Buffy — propuesta técnica para revisión humana.<br>
 **Baseline documental:** `d8a681c6226f89b123a2802b3aeb02b18f029368`; el código auditado es el de `094f93d065cbbedce7d9ff35aeb862db92422476`.<br>
@@ -24,7 +24,7 @@ decisions: "DECISIONS-ARCH-002-SECURITY-REMEDIATION.md"
 **Registro de decisiones:** `DECISIONS-ARCH-002-SECURITY-REMEDIATION.md`; toda decisión abierta permanece `PENDING USER DECISION`.<br>
 **Autoridad documental:** este documento no modifica la SPEC-ARCH-001, no corrige código, no cambia tests, configuración, instalador ni estados oficiales, y no habilita OIDC ni producción. Sólo una aprobación humana explícita de esta SPEC, versión y hash autorizará implementación.
 
-> **Nota de autoridad:** no se encontró en el expediente examinado una aprobación formal de SPEC-ARCH-001: su archivo se autodeclara `DRAFT` y “no aprobada”. La misión la trata como referencia, pero esta SPEC no la declara aprobada ni convierte sus borradores en normativos. La cuestión queda en **D-01**; si no existe aprobación formal, la cobertura de esta SPEC es condicional y no puede declararse conformidad.
+> **Nota de autoridad:** no se encontró en el expediente examinado una aprobación formal de SPEC-ARCH-001: su archivo se autodeclara `DRAFT` y “no aprobada”. Esta SPEC **puede aprobarse explícitamente de forma condicional** aunque SPEC-ARCH-001 permanezca `DRAFT`; esa aprobación no aprueba la SPEC-ARCH-001 ni permite declarar conformidad normativa completa. Aprobar SPEC-ARCH-002, aprobar SPEC-ARCH-001 y declarar conformidad completa son actos distintos y requieren evidencia separada. La cuestión queda en **D-01**.
 
 ## 1. Resumen ejecutivo
 
@@ -38,7 +38,7 @@ La auditoría de Etapa B identificó cinco hallazgos P1 y ningún P0 demostrado:
 | AUD-04 | La migración importa grants sin exigir un evento `approval` correlacionado. | Un grant histórico puede quedar autorizable sin la evidencia de commit que lo justifica. |
 | AUD-05 | `--verify-storage` sólo verifica la cadena. | Declara `valid=True` con solicitudes/grants manipulados o salud bloqueada. |
 
-La corrección es acotada en alcance funcional, pero atraviesa almacenamiento, ciclo de aprobación, gate, filesystem, migración, CLI y compatibilidad. Las cinco correcciones deben cumplirse antes de declarar cerrada la Etapa B. Esta SPEC no implementa ninguna.
+La corrección es acotada en alcance funcional, pero atraviesa almacenamiento, ciclo de aprobación, gate, filesystem, migración, CLI y compatibilidad. Las cinco correcciones P1 deben implementarse, pero AUD-02 no se declarará completamente cerrado mientras no exista un mecanismo autorizado de resolución de intenciones huérfanas. Esta SPEC no implementa ninguna.
 
 ## 2. Contexto y evidencia
 
@@ -61,7 +61,7 @@ La corrección es acotada en alcance funcional, pero atraviesa almacenamiento, c
 
 ### 2.3 Contradicciones y requisitos insuficientes
 
-1. **SPEC-ARCH-001 se declara DRAFT.** Su frontmatter dice `status: DRAFT` y su encabezado dice “no aprobada”. La misión la trata como aprobada. Es una decisión de autoridad documental, no una interpretación técnica. **D-01.**
+1. **SPEC-ARCH-001 se declara DRAFT.** Su frontmatter dice `status: DRAFT` y su encabezado dice “no aprobada”. La misión la trata como referencia. Es una decisión de autoridad documental, no una interpretación técnica: D-01 distingue la aprobación condicional de SPEC-ARCH-002 de la aprobación de SPEC-ARCH-001 y de la conformidad normativa completa. **D-01.**
 2. **RF-001 usa dos fórmulas distintas para el desafío.** Permite “challenge invalidado al fallar auth” —lo que suena optativo— y a la vez exige “no volverlo reutilizable”. La segunda es obligatoria; la primera no define el disparador exacto ni cómo emitir uno nuevo. **D-02 y D-03.**
 3. **La implementación declara el comportamiento contrario.** `IMPLEMENTATION-ARCH-001.md` afirma que “un fallo de autenticación no consume el desafío”, y la prueba lo consagra. Eso contradice RF-001 y el expediente de auditoría; no puede usarse como contrato.
 4. **RF-006/RF-008 exigen `INDETERMINATE` y fail-stop, pero no definen el journal de operación ni el escaneo de arranque.** La documentación del store afirma una garantía que el código no implementa. Esta SPEC convierte el resultado en requisito verificable; AUD-15 queda como corrección documental posterior, fuera de alcance.
@@ -76,7 +76,7 @@ La corrección es acotada en alcance funcional, pero atraviesa almacenamiento, c
 ### 3.1 Incluido
 
 - AUD-01: invalidación durable y de un solo uso del desafío después de un fallo de autenticación/firma, sin aprobación falsa.
-- AUD-02: journal durable de operaciones, recuperación al arrancar, bloqueo por intención huérfana y reconciliación explícita.
+- AUD-02: journal durable de operaciones, detección al arrancar, bloqueo persistente por intención huérfana, preservación de evidencia e inspección de sólo lectura. La resolución humana sólo puede existir si ya hay un mecanismo administrativo autorizado; esta misión no implementa ni inventa ese mecanismo y no declara AUD-02 completamente cerrado sin él.
 - AUD-03: propagación de errores de `fsync` de archivo/directorio y resultado de durabilidad veraz.
 - AUD-04: correlación obligatoria entre grant migrado y evento `approval`; rechazo fail-closed de evidencia no correlacionable.
 - AUD-05: verificación integral del store y contrato veraz de `--verify-storage`.
@@ -122,7 +122,7 @@ No se introduce un estado documental, de solicitud, de autenticación, de autori
 
 - **Desafío presentado:** solicitud de aprobación que incluye un token cuyo SHA-256 coincide con el `challenge_hash` almacenado.
 - **Rechazo definitivo de autenticación:** el proveedor o el verificador establece, sin ambigüedad, que la credencial o la identidad no es aceptable: firma/claims inválidos, `issuer`/`audience`/`subject`/nonce/exp/iat/auth_time incorrectos, replay, o denegación explícita del proveedor. Consume e invalida el desafío; no hay aprobación.
-- **Rechazo definitivo de binding/revisión:** tras demostrar posesión del desafío, `state`, sesión, PKCE, fingerprint de revisión, scope o contenido no coinciden de forma concluyente. No es un fallo transitorio; consume e invalida el desafío en la política recomendada (D-02).
+- **Rechazo definitivo de binding/revisión:** tras demostrar posesión del desafío, `state`, sesión, PKCE, fingerprint de revisión, scope o contenido no coinciden de forma concluyente. No es un fallo transitorio y nunca puede aprobar; **D-02 determina expresamente si se clasifica como rechazo definitivo y, por tanto, si consume el desafío**. Mientras D-02 esté pendiente no se presume esa clasificación.
 - **Fallo transitorio del proveedor:** timeout, error de red, `5xx`, indisponibilidad o rate limit sin respuesta definitiva de identidad. No consume el desafío, no aprueba y debe auditarse; se permite reintento acotado dentro de la vigencia del desafío y con backoff.
 - **Error de configuración:** `SETUP_INCOMPLETE`, proveedor no configurado, trust store ausente o callback no disponible. No es un rechazo de identidad, no consume el desafío y no aprueba.
 - **Firma rechazada:** una firma producida que no verifica es un fallo definitivo de integridad: invalida el desafío y bloquea la aprobación. **No** se confunde con el firmante no disponible o un error interno antes de producir firma, que es técnico, no consume el desafío y no aprueba.
@@ -130,8 +130,11 @@ No se introduce un estado documental, de solicitud, de autenticación, de autori
 - **Intención durable:** registro persistido y confirmado antes de cualquier efecto en el filesystem.
 - **Resultado durable:** registro persistido del efecto y de la durabilidad observada.
 - **Intención huérfana:** intención durable sin resultado terminal correlacionado, tras reinicio o nueva instancia.
-- **Operación resuelta:** intención huérfana acompañada por evidencia humana que determina si el target fue modificado; no implica reejecución.
+- **Operación resuelta:** intención huérfana acompañada por evidencia humana que determina si el target fue modificado, sólo cuando existe un mecanismo administrativo autorizado; no implica reejecución ni se declara disponible por el hecho de definirla.
 - **Store válido:** todas las comprobaciones de RF-016 pasan y la salud es `HEALTHY`; no significa que la historia sea completa frente a un ancla externa (AUD-07 sigue abierto).
+- **Aprobación condicional de SPEC-ARCH-002:** autorización humana explícita del texto, versión y hash de esta SPEC con la condición documental de que D-01 sigue pendiente. Permite continuar la revisión y, tras cumplir las demás compuertas, la implementación autorizada; no aprueba SPEC-ARCH-001 ni acredita conformidad normativa completa.
+- **Aprobación de SPEC-ARCH-001:** acto humano separado sobre el texto, versión y hash de la SPEC padre. No se infiere de aprobar SPEC-ARCH-002.
+- **Conformidad normativa completa:** condición que exige que el baseline heredado esté formalmente aprobado y trazado. No puede declararse mientras D-01 permanezca pendiente.
 
 ## 5. Requisitos funcionales
 
@@ -142,43 +145,44 @@ No se introduce un estado documental, de solicitud, de autenticación, de autori
 **Requisitos:**
 
 - **RF-012.1** Un intento que presenta un desafío cuyo hash coincide con el almacenado DEBE ser de un solo uso para el éxito. Un mismo token no puede producir dos aprobaciones ni dos grants.
-- **RF-012.2** Un **rechazo definitivo de autenticación o de binding/revisión** posterior a la posesión del desafío DEBE invalidarlo permanentemente y registrar evidencia durable. La solicitud NO DEBE quedar `APPROVED`, NO DEBE emitirse grant y el mismo token NO DEBE volver a aceptarse. Un fallo transitorio del proveedor, un error de configuración (`SETUP_INCOMPLETE`, proveedor no configurado) o el firmante no disponible NO son rechazos de identidad y NO DEBEN consumir el desafío.
+- **RF-012.2** Un **rechazo definitivo de autenticación/firma** posterior a la posesión del desafío DEBE invalidarlo permanentemente y registrar evidencia durable. La solicitud NO DEBE quedar `APPROVED`, NO DEBE emitirse grant y el mismo token NO DEBE volver a aceptarse. Un fallo transitorio del proveedor, un error de configuración (`SETUP_INCOMPLETE`, proveedor no configurado), un error técnico anterior a la firma o el firmante no disponible NO son rechazos de identidad y NO DEBEN consumir el desafío.
+- **RF-012.2a** La clasificación de una divergencia definitiva de `state`/sesión/PKCE/fingerprint/scope/revisión como **rechazo definitivo de binding** es una decisión de seguridad separada (**D-02**). Si D-02 la clasifica como rechazo definitivo, RF-012.2 se aplica también a esa clase y el token no puede reutilizarse. Si D-02 no la clasifica así, la divergencia sigue sin poder aprobar ni emitir grant, pero el consumo del desafío debe seguir la opción aprobada. En ningún caso se presume una opción mientras D-02 esté pendiente.
 - **RF-012.3** La invalidación y la evidencia del fallo DEBEN persistirse de forma durable y atómica respecto de la comprobación de uso. Si no pueden persistirse, la tentativa DEBE fallar cerrada: no hay aprobación, no se declara salud `HEALTHY` y la autoridad no concede nuevas operaciones hasta recuperar.
 - **RF-012.4** Un intento con hash de desafío incorrecto, solicitud inexistente, token ausente o formato inválido NO DEBE consumir un desafío válido; no debe permitir que un tercero sin posesión del token agote desafíos ajenos.
 - **RF-012.5** La invalidación DEBE usar una comprobación y actualización atómicas (compare-and-swap o equivalente). Si dos intentos compiten, como máximo uno puede consumir el desafío; el otro DEBE denegarse. Ningún resultado de la carrera puede ser `APPROVED` sin autenticación y commit completos.
 - **RF-012.6** La autoridad PUEDE emitir un desafío nuevo para la misma solicitud sólo mediante una acción administrativa explícita, no automática, y sólo si la solicitud no está `APPROVED` y la SPEC/alcance no cambiaron. El token anterior DEBE quedar permanentemente inutilizable; emitir uno nuevo no revalida el anterior. La elección entre reemitir sobre la misma solicitud o exigir una solicitud nueva es **D-03**.
-- **RF-012.7** Un fallo de commit con resultado ambiguo NO DEBE presentarse como éxito ni permitir un reintento ciego. Si no puede demostrarse que no hubo commit, el store/authority DEBE bloquearse como `INDETERMINATE`/`RECONCILIATION_REQUIRED` y requerir reconciliación.
-- **RF-012.8** El fallo DEBE dejar evidencia consultable sin incluir el token, el código OIDC, el nonce ni secretos equivalentes. La evidencia debe permitir distinguir, como mínimo, `authentication_rejected`, `binding_rejected`, `provider_unavailable`, `configuration_error`, `challenge_invalidated`, `challenge_expired` y `approval_confirmed`.
+- **RF-012.7** Un fallo de commit con resultado ambiguo NO DEBE presentarse como éxito ni permitir un reintento ciego. Si no puede demostrarse que no hubo commit, el store/authority DEBE bloquearse como `INDETERMINATE`/`RECONCILIATION_REQUIRED`; no se desbloquea sin resolución autorizada y, si ese mecanismo no existe, permanece bloqueado.
+- **RF-012.8** El fallo DEBE dejar evidencia consultable sin incluir el token, el código OIDC, el nonce ni secretos equivalentes. La evidencia debe permitir distinguir, como mínimo, `authentication_rejected`, `binding_rejected` (si D-02 clasifica el binding como rechazo definitivo; en otro caso, `binding_mismatch`), `provider_unavailable`, `configuration_error`, `challenge_invalidated`, `challenge_expired` y `approval_confirmed`.
 - **RF-012.9** Un fallo transitorio DEBE registrarse, aplicar backoff y limitar reintentos, pero NO DEBE invalidar automáticamente el desafío ni rotarlo. La solicitud permanece pendiente y sin aprobación. Si se agota la vigencia o el límite de reintentos, el desafío expira y se requiere una reemisión administrativa conforme a D-03; el resultado no se etiqueta como rechazo de identidad.
 - **RF-012.10** El estado de la tentativa y la causa deben ser consultables sin secretos. Un error técnico nunca puede convertirse en `APPROVED`, aunque el proveedor haya podido autenticar: la aprobación sólo existe después de un commit completo y durable.
 - **RF-012.11** Si la autenticación/firma tuvo éxito pero el commit es ambiguo, el desafío NO DEBE reutilizarse para un reintento ciego; la autoridad DEBE bloquearse como `INDETERMINATE`/`RECONCILIATION_REQUIRED` y preservar la evidencia.
 
-**Tabla de decisión propuesta (sujeta a D-02).** Las filas marcadas «obligatorio» son el mínimo de esta SPEC; las demás son la recomendación que el usuario debe aprobar o rechazar:
+**Tabla de decisión propuesta (sujeta a D-02).** Las filas marcadas «obligatorio» son el mínimo de esta SPEC; las demás dependen de una decisión que el usuario debe aprobar o rechazar. D-02 no puede debilitar el no-uso de un token incorrecto, la no aprobación ante errores, el CAS ni la prohibición de reutilizar cualquier supuesto que se clasifique como rechazo definitivo:
 
 | Resultado observado | ¿Consume/invalida el desafío? | ¿Aprueba? | Estado/evidencia |
 |---|---|---|---|
 | Token ausente, hash incorrecto, formato no interpretable o solicitud inexistente | No; no hay posesión demostrada | No | `challenge_not_presented`/`bad_challenge`; no altera un desafío válido |
 | Firma/claims/subject/nonce/issuer/audience/exp/iat/auth_time inválidos; replay; denegación explícita | Sí; rechazo definitivo (obligatorio) | No | `authentication_rejected`; desafío invalidado durablemente |
-| `state`, sesión, PKCE, fingerprint, scope o revisión divergentes tras posesión | Sí; rechazo definitivo de binding (recomendado D-02-b) | No | `binding_rejected`; desafío invalidado |
+| `state`, sesión, PKCE, fingerprint, scope o revisión divergentes tras posesión | **Pendiente D-02:** si D-02 lo clasifica como rechazo definitivo, sí; si no, no se presume el consumo | No, en ninguna opción | `binding_rejected` si D-02-b; en otro caso, `binding_mismatch`; sin aprobación |
 | Firma producida que no verifica | Sí; rechazo definitivo de integridad (obligatorio) | No | `signature_invalid`; salud/registro coherente |
 | `SETUP_INCOMPLETE`, proveedor/callback/trust store no configurado | No | No | `configuration_error`; desafío intacto |
 | Timeout, red, `5xx`, indisponibilidad o rate limit sin respuesta definitiva | No; backoff y límite de reintentos | No | `provider_unavailable`; desafío activo hasta expirar |
 | Firmante no disponible o error interno antes de producir firma | No | No | `technical_error`; no se declara rechazo de identidad |
-| Autenticación/firma correctas, commit ambiguo | Sí; no reutilizar | No | `INDETERMINATE`/`RECONCILIATION_REQUIRED` |
+| Autenticación/firma correctas, commit ambiguo | Sí; no reutilizar (obligatorio) | No | `INDETERMINATE`/`RECONCILIATION_REQUIRED` |
 
 **Transiciones internas del desafío.** Estos nombres describen el ciclo de vida del desafío; no son estados documentales, de solicitud, de autorización ni de salud, y pueden representarse con campos existentes. Las transiciones son normativas:
 
 | Estado interno | Entrada | Salida permitida | Prohibición |
 |---|---|---|---|
 | `ACTIVE` | Desafío emitido, no usado | `AUTHENTICATING` por CAS; `EXPIRED` por TTL | No se usa para aprobar; no hay dos intentos simultáneos. |
-| `AUTHENTICATING` | Intento con hash correcto y CAS ganador | `AUTHENTICATED` si auth/firma correctas; `ACTIVE` sólo por fallo transitorio/configuración/técnico; `INVALIDATED` por rechazo definitivo | No aprobar; no emitir grant; no reutilizar el intento. |
+| `AUTHENTICATING` | Intento con hash correcto y CAS ganador | `AUTHENTICATED` si auth/firma correctas; `ACTIVE` sólo por fallo transitorio/configuración/técnico, o si D-02 decide no consumir binding; `INVALIDATED` por rechazo definitivo | No aprobar; no emitir grant; no reutilizar el intento cuando sea definitivo. |
 | `AUTHENTICATED` | Auth/firma correctas, pendiente de commit | `CONSUMED` sólo con commit completo y durable; `INDETERMINATE` si el commit es ambiguo; `INVALIDATED` si el commit se rechaza definitivamente | No reintentar a ciegas; no devolver el token a `ACTIVE`. |
 | `CONSUMED` | Commit completo y durable | Terminal | No se reutiliza; no se reemite el mismo token. |
 | `INVALIDATED` | Rechazo definitivo de auth/binding/firma o commit rechazado | Terminal; sólo un desafío nuevo puede sustituirlo (D-03) | No se resetea ni se revalida. |
 | `EXPIRED` | TTL agotado | Terminal; reemisión administrativa (D-03) | No se usa para aprobar. |
 | `INDETERMINATE` | Efecto/commit no demostrable | Sólo reconciliación autorizada; no es un estado de aprobación | No se reintenta, no se borra, no se declara éxito. |
 
-**Límite de alcance.** El mínimo obligatorio es el rechazo definitivo de autenticación/firma; la inclusión de `state`/sesión/scope/revisión es la opción recomendada D-02-b, no una decisión ya aprobada. La rotación automática no se adopta: requiere autorización y no puede debilitar la propiedad de un solo uso. **D-02.**
+**Límite de alcance.** El mínimo obligatorio es el rechazo definitivo de autenticación/firma. La clasificación de `state`/sesión/scope/revisión como rechazo definitivo de binding sigue pendiente de **D-02**: la recomendación es D-02-b, pero no se presenta como obligación aprobada. Por definición, cualquier supuesto que D-02 clasifique como rechazo definitivo nunca deja el desafío reutilizable. La rotación automática no se adopta: requiere autorización y no puede debilitar la propiedad de un solo uso. **D-02.**
 
 **No cubierto por RF-012.** No se implementa el callback OIDC ni se acepta un token directo del agente. La producción sigue denegando por `SETUP_INCOMPLETE` hasta que exista el flujo aprobado de SPEC-ARCH-001.
 
@@ -192,7 +196,7 @@ No se introduce un estado documental, de solicitud, de autenticación, de autori
 - **RF-013.2** Si la intención no puede persistirse y confirmarse, NO DEBE ejecutarse el efecto. La operación DEBE devolver denegación/`NOT_EXECUTED` y no debe dejar un archivo modificado.
 - **RF-013.3** Después del efecto, la autoridad DEBE persistir un resultado terminal que registre si el efecto ocurrió, el digest/inode observable, la durabilidad y cualquier error. El resultado DEBE ser recuperable tras reinicio y correlacionable con la intención.
 - **RF-013.4** Al abrir el store o arrancar cualquier instancia que pueda ejecutar operaciones, el sistema DEBE buscar intenciones sin resultado terminal. Si encuentra al menos una, NO DEBE declarar `HEALTHY`, NO DEBE conceder nuevas autorizaciones y DEBE marcar la salud con un estado existente de bloqueo (`AUDIT_INCOMPLETE` o `RECONCILIATION_REQUIRED`). No se autocura, no se borra la marca y no se reejecuta la operación.
-- **RF-013.5** Una intención huérfana DEBE poder resolverse sólo con evidencia humana autenticada que indique si el target fue modificado y qué evidencia lo demuestra. La resolución DEBE registrar un evento durable ligado al identificador de la intención. La salud NO DEBE volver a `HEALTHY` mientras quede alguna intención sin resolver.
+- **RF-013.5** Cualquier resolución futura de una intención huérfana SÓLO PUEDE aceptarse con evidencia humana autenticada que indique si el target fue modificado y qué evidencia lo demuestra. Si existe un mecanismo autorizado, la resolución DEBE registrar un evento durable ligado al identificador de la intención. Si no existe, la operación permanece bloqueada conforme a RF-013.12; no se exige ni se simula un mecanismo. La salud NO DEBE volver a `HEALTHY` mientras quede alguna intención sin resolver.
 - **RF-013.6** El journal DEBE cubrir los puntos de caída: antes de la intención, después de la intención y antes del efecto, después del efecto y antes del resultado, y después del resultado y antes de responder. Los dos puntos intermedios deben terminar en bloqueo/reconciliación, no en salud sana.
 - **RF-013.7** Dos gates o procesos que intenten registrar la misma operación DEBEN producir como máximo una intención ejecutable y un resultado terminal. Un duplicado DEBE denegarse o resolverse como conflicto; nunca dos efectos no idempotentes.
 - **RF-013.8** Cualquier gate que ejecute operaciones DEBE usar un sink durable que soporte el journal y la consulta de intenciones huérfanas. Si el sink no puede demostrar esa capacidad, DEBE denegar las operaciones en lugar de degradar a `intent`/`result` sin recuperación.
@@ -201,7 +205,7 @@ No se introduce un estado documental, de solicitud, de autenticación, de autori
 - **RF-013.11** La recuperación de una intención huérfana DEBE ser explícita y humana. Ningún proceso, reinicio, tarea de mantenimiento o agente puede resolverla, borrarla, revertirla ni reejecutarla automáticamente. La inspección de sólo lectura puede informar la anomalía, pero no la convierte en autorización.
 - **RF-013.12** Si no existe un mecanismo administrativo autorizado que demuestre identidad humana reautenticada y aporte evidencia de la operación, la resolución permanece bloqueada. No se inventa un mecanismo alternativo ni se acepta una firma del propio agente. **OBS-03/D-07.**
 
-**Límite de alcance.** No se especifica aquí la tabla, archivo, transacción o algoritmo concreto del journal; esas son decisiones de implementación (D-06). Lo normativo es que la intención preceda al efecto, que el resultado sea durable, que la falta de atomicidad se represente como ambigüedad y que una intención huérfana bloquee con reconciliación humana autorizada.
+**Límite de alcance.** No se especifica aquí la tabla, archivo, transacción o algoritmo concreto del journal; esas son decisiones de implementación (D-06). Lo normativo es que la intención preceda al efecto, que el resultado sea durable, que la falta de atomicidad se represente como ambigüedad y que una intención huérfana bloquee. La resolución sólo puede existir mediante un mecanismo administrativo autorizado; no se implementa uno en esta misión y AUD-02 no se declara completamente cerrado sin él.
 
 ### RF-014 — Durabilidad verificable de las operaciones de archivo (AUD-03)
 
@@ -215,7 +219,7 @@ No se introduce un estado documental, de solicitud, de autenticación, de autori
 - **RF-014.4** Si el `fsync` de directorio falla después de un rename, create o unlink, el cambio puede existir pero su persistencia ante crash no está confirmada. El resultado DEBE ser `EXECUTED_NOT_DURABLE` o `INDETERMINATE`, `audit_complete=false`, y la autoridad DEBE bloquear nuevas operaciones hasta reconciliar.
 - **RF-014.5** Un filesystem que no soporta `fsync` de directorio DEBE tratarse como no soportado/fail-closed, no como éxito silencioso. La matriz de filesystems soportados debe declararse y probarse; no se extrapola a otros.
 - **RF-014.6** El recibo de operación DEBE incluir, como mínimo: `executed`, `data_synced`, `directory_synced`, `durability`, digest/inode observable y referencia de auditoría. La ausencia de un fsync obligatorio no puede compensarse con un digest correcto del contenido.
-- **RF-014.7** La recuperación NO DEBE revertir automáticamente una escritura o borrado cuyo `fsync` falló. Debe conservar la evidencia y exigir reconciliación; un rollback no autorizado puede destruir evidencia o afectar hardlinks.
+- **RF-014.7** La recuperación NO DEBE revertir automáticamente una escritura o borrado cuyo `fsync` falló. Debe conservar la evidencia y exigir bloqueo/resolución autorizada si existe el mecanismo; si no existe, permanece bloqueada. Un rollback no autorizado puede destruir evidencia o afectar hardlinks.
 
 **Cobertura.** RF-008 y SA-009 ya exigen este resultado. La implementación actual no lo cumple; esta SPEC no agrega una garantía nueva, sino un criterio verificable y un contrato de recibo.
 
@@ -284,7 +288,7 @@ No se introduce un estado documental, de solicitud, de autenticación, de autori
 - **SR-002 — Sin éxito falso.** Ninguna API, CLI o evento puede declarar éxito, durabilidad o aprobación si falta una evidencia obligatoria. `allowed`, `executed`, `durability` y `audit_complete` no son intercambiables.
 - **SR-003 — Evidencia durable y correlacionada.** Desafío, intención, resultado, grant y evento de aprobación deben poder correlacionarse por identificadores persistidos; una firma válida no sustituye la evidencia de commit.
 - **SR-004 — Un solo uso y carrera segura.** El desafío y el grant se consumen una vez; la concurrencia no produce dos autorizaciones ni dos efectos.
-- **SR-005 — Reconciliación humana.** Una intención huérfana o un resultado no durable sólo se resuelve con identidad administrativa reautenticada y evidencia; no se auto-repara.
+- **SR-005 — Reconciliación humana, cuando existe.** Una intención huérfana o un resultado no durable sólo puede resolverse con identidad administrativa reautenticada y evidencia mediante un mecanismo autorizado; si el mecanismo no existe, no se resuelve ni se auto-repara.
 - **SR-006 — Preservación de evidencia.** No se borran, reescriben ni reinterpretan silenciosamente registros históricos, archivos originales, WAL/SHM o eventos de fallo.
 - **SR-007 — Mínima exposición.** Tokens, códigos, nonces, material de claves y contenido sensible no se registran en logs, errores, eventos ni salidas CLI.
 - **SR-008 — Separación de estados.** Los estados documentales no se usan para representar fallos de autenticación, operación o almacenamiento; se usan los estados separados ya definidos.
@@ -316,10 +320,10 @@ No se introduce un estado documental, de solicitud, de autenticación, de autori
 | AC-012d | Un intento con token incorrecto no consume el desafío válido. | Unitario; el token correcto sigue funcionando si no hubo fallo autenticado. |
 | AC-012e | Un timeout, error de red, `5xx`, indisponibilidad o rate limit sin respuesta definitiva no consume ni invalida el desafío, no aprueba, deja evidencia y permite un reintento acotado dentro de la vigencia. | Proveedor simulado que agota el tiempo/falla; el mismo desafío sigue activo; `SETUP_INCOMPLETE` separado; no hay grant ni `APPROVED`. |
 | AC-012f | `SETUP_INCOMPLETE`/proveedor no configurado no consume el desafío ni se clasifica como rechazo de identidad. | Prueba de configuración; `challenge_used=false`; estado de setup; sin aprobación. |
-| AC-012g | Un `state`/sesión/PKCE/fingerprint/scope divergente tras la posesión se trata como rechazo definitivo de binding en la política recomendada: no aprueba, invalida el desafío y no permite reutilizarlo. | Unitario por cada binding; evento `binding_rejected`; token anterior rechazado; decisión D-02 registrada. |
+| AC-012g | La prueba cubre la clasificación aprobada en D-02 para binding/revisión: si D-02-b, el rechazo definitivo invalida el desafío y no permite reutilizarlo; si otra opción, no se presume consumo, pero nunca hay aprobación ni grant. La prueba no puede marcarse PASS con D-02 pendiente. | Unitario por cada binding; decisión D-02 registrada con la alternativa elegida; evento/resultado coherente; sin `APPROVED` ni grant en ninguna opción. |
 | AC-012h | El firmante no disponible antes de producir firma se trata como error técnico, no como rechazo de identidad: no aprueba, no consume el desafío y no se etiqueta `authentication_rejected`. | Inyección de error del firmante; desafío activo; sin grant; reintento permitido sólo si la política lo autoriza. |
 | AC-013a | Si el proceso muere después de la intención y antes del resultado, al reiniciar no hay `HEALTHY`, no se conceden nuevas operaciones y no se reejecuta el efecto. | Subproceso con `os._exit(9)` en cada ventana; `valid=false`/salud bloqueada; archivo y journal preservados. |
-| AC-013b | Una intención huérfana no puede limpiarse con una reconciliación genérica; exige un mecanismo autorizado con identidad humana reautenticada y evidencia ligada a la operación. Si no existe, permanece bloqueada y `reconcile` no la resuelve. | Intento de `reconcile` sin resolución: denegado/no aplicable; prueba de que limpiar auditoría incompleta no borra la huérfana; con mecanismo autorizado y evidencia: evento correlacionado y salud sólo entonces. |
+| AC-013b | Sin un mecanismo administrativo autorizado, una intención huérfana permanece bloqueada: `reconcile` no la resuelve, no se borra, no se reejecuta y la salud no vuelve a `HEALTHY`. La inspección de sólo lectura y la preservación de evidencia sí funcionan. No se simula ni se exige un mecanismo inexistente. | Intento de `reconcile` genérico: no resuelve; snapshot/hash demuestra preservación; lectura de diagnóstico funciona; reinicio mantiene el bloqueo; ninguna firma de agente se acepta. |
 | AC-013c | Una caída antes de la intención no deja efecto; una caída después del resultado conserva el resultado y no duplica la operación. | Matriz de puntos de caída; hashes y eventos antes/después. |
 | AC-014a | Un fallo de `fsync` de directorio en `create_file`, `modify_file`, `overwrite_file` o `delete_file` no produce `DURABILITY_CONFIRMED` ni un éxito de API. | Inyección de `OSError` por operación; `EXECUTED_NOT_DURABLE`/`INDETERMINATE`; bloqueo. |
 | AC-014b | Un fallo de `fsync` de archivo antes del rename no deja un target alterado; si la limpieza falla, el resultado es indeterminado y bloquea. | Inyección en archivo/temporal; target y temp inspeccionados; sin éxito. |
@@ -354,7 +358,7 @@ No se introduce un estado documental, de solicitud, de autenticación, de autori
 | Migración con grant sin evento correlacionado | Rechazo o cuarentena no autorizable según D-04; sin grant activo; originales intactos. | Insertar grant; marcar `completed`; borrar fuente. |
 | Fallback legacy con grant no correlacionado | Denegación; sin evento nuevo; no autoriza. | Devolver el grant sólo porque el store no lo tiene; inventar correlación. |
 | Store manipulado o salud bloqueada | `ok=false`; `store_valid=false`; `valid=false`; exit 2. | `valid=True`; `HEALTHY`; reparación automática. |
-| Reinicio tras cualquier fallo anterior | Bloqueo persistente hasta reconciliación humana. | Reinicio “limpio” que borra la marca. |
+| Reinicio tras cualquier fallo anterior | Bloqueo persistente; resolución sólo mediante mecanismo autorizado. Si no existe, el bloqueo permanece. | Reinicio “limpio” que borra la marca; simular una reconciliación. |
 
 ## 10. Estrategia de recuperación
 
@@ -362,7 +366,7 @@ No se introduce un estado documental, de solicitud, de autenticación, de autori
 
 1. **Preservar antes de actuar:** detener la autoridad, conservar base, `-wal`, `-shm`, journal, archivos, logs y hashes. No borrar evidencia para “volver a intentar”.
 2. **No auto-reparar:** ningún arranque debe convertir una intención huérfana, un grant no correlacionado o una salud bloqueada en `HEALTHY`.
-3. **Reconciliación humana:** un administrador reautenticado debe aportar evidencia y una nota; la autoridad registra un evento durable y sólo después puede evaluar el desbloqueo.
+3. **Reconciliación humana, sólo si existe:** si ya existe un mecanismo administrativo autorizado, un administrador reautenticado debe aportar evidencia y una nota; la autoridad registra un evento durable y sólo después puede evaluar el desbloqueo. Si no existe, la operación permanece bloqueada; esta SPEC no lo implementa ni lo simula.
 4. **No repetir operaciones no idempotentes:** una escritura o borrado indeterminado no se reejecuta ni se revierte sin una decisión humana y una operación autorizada nueva.
 5. **Verificar después:** tras la recuperación, `--verify-storage` debe pasar y la autoridad debe arrancar sin huérfanas.
 
@@ -380,12 +384,12 @@ No se introduce un estado documental, de solicitud, de autenticación, de autori
 1. Detener la autoridad y preservar la evidencia.
 2. Localizar la intención por `operation_id`; comparar target, digest/inode previo, existencia y journal.
 3. Determinar si el efecto ocurrió. No inferir sólo por “no hay resultado”.
-4. Si ocurrió, registrar la resolución como ejecutada; no repetir. Si no ocurrió, registrar la resolución como no ejecutada; una ejecución posterior requiere una operación autorizada nueva.
+4. Si existe un mecanismo autorizado y la evidencia demuestra que ocurrió, registrar la resolución como ejecutada; no repetir. Si no ocurrió, registrar la resolución como no ejecutada; una ejecución posterior requiere una operación autorizada nueva.
 5. Si el resultado es ambiguo incluso con la evidencia, mantener `INDETERMINATE`/`RECONCILIATION_REQUIRED`; no desbloquear por comodidad.
-6. Registrar reconciliación con identidad admin, reautenticación y nota; sólo entonces volver a `HEALTHY` si no quedan huérfanas.
+6. Si existe el mecanismo autorizado, registrar reconciliación con identidad admin, reautenticación y nota; sólo entonces volver a `HEALTHY` si no quedan huérfanas. Si no existe, no se registra resolución ni se desbloquea.
 7. Ejecutar `--verify-storage` y reiniciar; comprobar que no se repitió el efecto.
 
-**Límite OBS-03.** El mecanismo existente `reconcile` exige UID administrador y reautenticación, pero en producción `_approval_event` sigue denegando por `SETUP_INCOMPLETE` y la prueba sólo usa identidad simulada. Además, `reconcile` limpia una auditoría incompleta; no resuelve por sí mismo una intención huérfana. Hasta que exista un mecanismo autorizado que ligue identidad humana, evidencia y operación, la resolución de huérfanas queda bloqueada. Un agente no puede reconciliar, aprobar ni firmar por sí mismo.
+**Límite OBS-03.** El mecanismo existente `reconcile` exige UID administrador y reautenticación, pero en producción `_approval_event` sigue denegando por `SETUP_INCOMPLETE` y la prueba sólo usa identidad simulada. Además, `reconcile` limpia una auditoría incompleta; no resuelve por sí mismo una intención huérfana. Hasta que exista un mecanismo autorizado que ligue identidad humana, evidencia y operación, la resolución de huérfanas queda bloqueada. Un agente no puede reconciliar, aprobar ni firmar por sí mismo. **IMP-04 no implementa este mecanismo y AUD-02 no se declara completamente cerrado sin él.**
 
 ### 10.4 Migración fallida (AUD-04)
 
@@ -475,7 +479,7 @@ No se introduce un estado documental, de solicitud, de autenticación, de autori
 |---|---|---|
 | Authority | Debe invalidar desafío, bloquear por huérfanas, verificar grants y exponer estado veraz. | No se implementa OIDC ni UI. |
 | `SQLiteAuthorityStore` | Probable esquema v2/journal, CAS de desafío, correlación, verificación integral y migración. | No se toca el archivo en esta misión. |
-| `ImplementationGate` | Intención durable, resultado, recuperación, contrato de durabilidad y reconciliación. | No se cambia el gate ahora. |
+| `ImplementationGate` | Intención durable, resultado, detección de huérfanas, bloqueo persistente, preservación e inspección de sólo lectura. No implementa resolución humana. | No se cambia el gate ahora. |
 | `safe_fs` | Propagar errores de fsync y devolver evidencia de durabilidad; no limpiar silenciosamente. | No se cambia ahora. |
 | Migración histórica | Correlación obligatoria; aborto o cuarentena no autorizable según D-04; grants no verificables bloqueados. | No se reescriben fuentes ni bases. |
 | Fallback legacy | Paridad de verificación RF-015.7–RF-015.9; no autoriza grants no correlacionados/cuarentenados. | No se elimina el fallback ni se resuelve AUD-06. |
@@ -497,6 +501,8 @@ No se introduce un estado documental, de solicitud, de autenticación, de autori
 | AUD-04 | RF-001, RF-006 (P0), SA-002; RF-004 para compatibilidad | Invariante general, sin regla de migración correlacionada. | RF-015, AC-015. |
 | AUD-05 | RF-005 (P0), SA-006/SA-014; Audit API `Verify()` | Parcial; no enumera verificación por registro. | RF-016, AC-016. |
 
+La cobertura de esta tabla es **condicional**: no acredita la aprobación de SPEC-ARCH-001 ni permite declarar conformidad normativa completa. La aprobación condicional de SPEC-ARCH-002 no cambia el estado de SPEC-ARCH-001. **D-01.**
+
 ### 15.2 Matriz AUD → RF → AC → prueba → decisión
 
 | AUD | RF | AC | Pruebas | Decisión pendiente |
@@ -511,12 +517,13 @@ No se introduce un estado documental, de solicitud, de autenticación, de autori
 
 - AUD-06 a AUD-17 no se corrigen aquí. En particular, AUD-06 (fallback legacy) queda cubierto sólo por el ajuste mínimo anti-bypass RF-015.7–RF-015.9; su eliminación/rediseño general sigue fuera de alcance. AUD-07 (truncación sin ancla), AUD-08 (migración concurrente), AUD-09 (replay/OIDC) y AUD-15 (docs sobre `INDETERMINATE`) siguen abiertos.
 - **OBS-01** queda recogida en RF-015.7–RF-015.9 y AC-015d; **OBS-02** en RF-012.9–RF-012.10 y AC-012e/f/h; **OBS-03** en RF-013.11–RF-013.12 y §10.3; **OBS-04** en TST-09/AC-017 y en la corrección de dependencia IMP-03 del PLAN.
+- **OBS-05** queda recogida en la Nota de autoridad, §4.2, §15.1 y §18; **OBS-06** en RF-012.2/2a, AC-012g y §17; **OBS-07** en §3.1, RF-013.5, §10.1/§10.3 y AC-013b; **OBS-08** en las compuertas y dependencias del PLAN.
 - SA-014 no se declara cumplido por esta SPEC; sólo se definen las pruebas que la corrección debe aportar.
 - La aprobación de SPEC-ARCH-001 no se infiere de este documento. **D-01.**
 
 ## 16. Riesgos residuales
 
-1. **No hay atomicidad real entre SQLite y filesystem.** El journal reduce la ventana y hace visible la ambigüedad; no la elimina. Un crash puede requerir reconciliación humana.
+1. **No hay atomicidad real entre SQLite y filesystem.** El journal reduce la ventana y hace visible la ambigüedad; no la elimina. Un crash puede requerir una resolución humana autorizada; si no existe mecanismo, el bloqueo permanece.
 2. **La durabilidad física no se demuestra con mocks.** La inyección de `fsync` prueba manejo de errores; el hardware/filesystem objetivo debe probarse aparte.
 3. **La invalidación estricta del desafío puede ser un vector de denegación de servicio** si un tercero posee el token y provoca fallos. La extensión exacta a state/sesión/scope es D-02; el mínimo de autenticación/firma es obligatorio.
 4. **Rechazar grants históricos sin evento correlacionable puede bloquear aprobaciones legítimas.** La política de re-aprobación/cuarentena es D-04; no se resuelve técnicamente.
@@ -534,8 +541,8 @@ No se introduce un estado documental, de solicitud, de autenticación, de autori
 
 | ID | Decisión | Opciones | Efecto | Bloquea |
 |---|---|---|---|---|
-| D-01 | Autoridad formal de SPEC-ARCH-001 | (a) aprobar/hash y actualizar su estado; (b) mantener DRAFT y no declarar cobertura. | Determina si existe baseline normativo. | Aprobación de esta SPEC. |
-| D-02 | Disparador de invalidación | (a) sólo autenticación/firma; (b) todo rechazo definitivo posterior a la posesión, incluido binding/revisión (recomendada); (c) rotación automática (no recomendada). | Seguridad vs. fricción/DoS; los fallos transitorios no invalidan. | RF-012 completo. |
+| D-01 | Autoridad formal de SPEC-ARCH-001 | (a) aprobar/hash y actualizar su estado; (b) mantener DRAFT y permitir aprobación condicional de esta SPEC sin declarar cobertura completa. | Determina si existe baseline normativo; no impide aprobar condicionalmente SPEC-ARCH-002. | Conformidad normativa completa, no la aprobación condicional de esta SPEC. |
+| D-02 | Disparador de invalidación | (a) sólo autenticación/firma; (b) todo rechazo definitivo posterior a la posesión, incluido binding/revisión (recomendada); (c) rotación automática (no recomendada). | Seguridad vs. fricción/DoS; los fallos transitorios no invalidan; binding/revisión queda pendiente. | Clasificación de binding/revisión y AC-012g; no el mínimo obligatorio de auth/firma. |
 | D-03 | Reemisión del desafío | (a) misma solicitud con desafío nuevo; (b) nueva solicitud obligatoria; (c) ambas con condiciones (recomendada: (a) por defecto, (b) si cambia alcance/expira). | UX, estado y auditoría. | RF-012.6. |
 | D-04 | Grants históricos no correlacionados | (a) rechazar toda la migración; (b) cuarentenar y bloquear; (c) re-aprobación; (d) aceptar como legacy (no recomendada). | Disponibilidad histórica vs. trazabilidad. | RF-015/migración. |
 | D-05 | Contrato de verificación y compatibilidad | (a) `valid=ok`, campos separados (recomendada); (b) `valid` de cadena + `ok` (no recomendada); (c) nueva versión de protocolo. | Consumidores CLI/adaptadores. | RF-016/AC-016. |
@@ -550,8 +557,8 @@ Ninguna opción está aprobada. El análisis completo, alternativas, consecuenci
 Esta SPEC queda en **DRAFT**. No se implementa, no se modifica ningún componente y no se declara producción habilitada. La aprobación debe ser explícita sobre:
 
 1. el texto, versión y hash de esta SPEC;
-2. las decisiones D-01 a D-08 que correspondan, con el estado registrado en `DECISIONS-ARCH-002-SECURITY-REMEDIATION.md`;
+2. las decisiones D-01 a D-08 que correspondan, con el estado registrado en `DECISIONS-ARCH-002-SECURITY-REMEDIATION.md`; D-01 no es requisito para la aprobación condicional de esta SPEC;
 3. el alcance estricto de los cinco P1, más el ajuste mínimo anti-bypass del fallback, sin OIDC ni correcciones P2/P3 no autorizadas;
 4. el contrato de verificación y exit codes de D-05, y la política de fallos transitorios de D-02.
 
-Hasta entonces, las garantías descritas son requisitos propuestos, no comportamiento demostrado.
+La aprobación de esta SPEC puede ser **condicional** si D-01 sigue pendiente. Esa aprobación no aprueba SPEC-ARCH-001, no cambia su estado ni hash y no permite declarar conformidad normativa completa. Hasta que exista aprobación explícita, las garantías descritas son requisitos propuestos, no comportamiento demostrado.
