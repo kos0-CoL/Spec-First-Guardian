@@ -8,9 +8,14 @@
   "authorization_event_id": "EVENT-2026-11-05-001",
   "verified": true,
   "revoked": false,
+  "project": "Spec-First-Guardian",
+  "operations": [],
+  "authorized_paths": [],
+  "requirements": [],
+  "tasks": [],
   "key_id": "KEY-2026-11-05-001",
   "algorithm": "Ed25519",
-  "signature": "f4r8VE6JPeUanbvnDiqer7b0S4toqHWNUi46y8uRIrQ4+7HiprZqPjOtK/V8/w3YOrB13Zgoi++b9dwOxOqABg==",
+  "signature": "r/wpRzlxqrGVjsGH342ojh0ztjeNnFc8+7HA/rukBO2sE7V/P/xotFpZT+f0ZaodKHf3U42TCBaeP88/cZvhAg==",
   "signed_at": "2026-11-05",
   "signer": "usuario"
 }
