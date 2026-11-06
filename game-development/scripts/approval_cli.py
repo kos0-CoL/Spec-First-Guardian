@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
-"""CLI de la autoridad de aprobacion (uso exclusivo del lado humano/confiable).
+"""Consola de la autoridad de Spec-First Guardian.
 
-Este proceso es el unico que conoce la ubicacion de la clave privada. Los
-agentes no deben poder ejecutarlo ni leer su configuracion.
+Se ejecuta en el dominio de la autoridad (UID administrador distinto del UID de
+los agentes). No importa claves ni verifica firmas localmente: toda operacion se
+delega en el servicio de autoridad por el socket Unix.
 
 Flujo:
-    approval_cli.py request --spec SPEC.md ... --out request.json
-    approval_cli.py approve --request request.json --event event.json --out approval.json
-    approval_cli.py verify --approval approval.json
+
+1. El agente crea la solicitud con ``request``.
+2. La persona administradora revisa con ``pending`` y obtiene un desafio de un
+   solo uso con ``challenge``.
+3. La persona confirma con ``approve`` y su token OIDC.
+4. Cualquier operacion posterior se autoriza contra la aprobacion firmada.
 """
 
 from __future__ import annotations
@@ -20,128 +24,130 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import approval_service
-import validate
-
-CONFIG_ENV = "SPEC_GUARDIAN_AUTHORITY_CONFIG"
+import authority_client
 
 
-def load_config(path: str | None) -> dict:
-    configured = path or os.environ.get(CONFIG_ENV)
-    if not configured:
-        raise SystemExit("Falta --config o SPEC_GUARDIAN_AUTHORITY_CONFIG.")
-    data = json.loads(Path(configured).read_text(encoding="utf-8"))
-    if not isinstance(data, dict):
-        raise SystemExit("Configuracion de autoridad invalida.")
-    return data
-
-
-def build_service(config: dict) -> approval_service.ApprovalService:
-    authority = config.get("authority") or {}
-    identity = config.get("identity") or {}
-    signer = approval_service.FileSignerBackend(
-        key_path=authority.get("private_key_file", ""),
-        key_id=authority.get("key_id", ""),
-        issuer=authority.get("issuer", ""),
-        workspace_root=config.get("agent_workspace"),
+def _client(args) -> authority_client.AuthorityClient:
+    socket_path = args.socket or os.environ.get("SPEC_GUARDIAN_AUTHORITY_SOCKET", "")
+    if not socket_path:
+        raise authority_client.AuthorityUnavailable("SPEC_GUARDIAN_AUTHORITY_SOCKET no configurado")
+    expected = os.environ.get("SPEC_GUARDIAN_AUTHORITY_UID", "").strip()
+    return authority_client.AuthorityClient(
+        socket_path=Path(socket_path),
+        expected_uid=int(expected) if expected.isdigit() else None,
     )
-    if not signer.available:
-        raise SystemExit(f"Backend de firma no disponible: {signer.error}")
-    jwks: dict = {}
-    jwks_file = identity.get("jwks_file")
-    if jwks_file:
-        jwks = {str(kid): pem for kid, pem in json.loads(Path(jwks_file).read_text(encoding="utf-8")).items()}
-    provider = approval_service.OIDCIdentityProvider(issuer=identity.get("issuer"), audience=identity.get("audience"), jwks=jwks)
-    if not provider.configured:
-        raise SystemExit("Proveedor de identidad no configurado: emisor, audiencia y JWKS son obligatorios.")
-    key_store = approval_service.TrustedKeyStore.from_config_file(config.get("trusted_keys_file"), workspace_root=config.get("agent_workspace"))
-    if not key_store.configured:
-        raise SystemExit(f"Almacen de confianza no disponible: {key_store.error}")
-    return approval_service.ApprovalService(provider=provider, signer=signer, key_store=key_store, environment="production")
 
 
-def _split(values) -> list:
-    result: list = []
-    for value in values or []:
-        result.extend(item.strip() for item in str(value).split(",") if item.strip())
-    return result
+def _print(payload: dict) -> None:
+    print(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True))
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Consola de la autoridad (SPEC-001).")
+    parser.add_argument("--socket", default=None)
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    status = sub.add_parser("status", help="Estado de la autoridad.")
+
+    request = sub.add_parser("request", help="Registra una solicitud de aprobacion.")
+    request.add_argument("--project", required=True)
+    request.add_argument("--spec", required=True, help="Ruta de la SPEC relativa al proyecto.")
+    request.add_argument("--scope", required=True)
+    request.add_argument("--operations", nargs="+", required=True)
+    request.add_argument("--paths", nargs="+", required=True)
+    request.add_argument("--requirements", nargs="+", required=True)
+    request.add_argument("--tasks", nargs="+", required=True)
+    request.add_argument("--expires-at", default=None)
+
+    sub.add_parser("pending", help="Lista solicitudes pendientes para revisar.")
+
+    challenge = sub.add_parser("challenge", help="Emite un desafio de un solo uso.")
+    challenge.add_argument("request_id")
+
+    approve = sub.add_parser("approve", help="Aprueba con identidad autenticada.")
+    approve.add_argument("request_id")
+    approve.add_argument("--challenge", required=True)
+    approve.add_argument("--id-token-file", default=None, help="Archivo con el ID token OIDC.")
+    approve.add_argument("--test-identity", default=None, help="Solo entorno de pruebas: sujeto que confirma.")
+    approve.add_argument("--confirm", action="store_true", help="Confirma explicitamente la aprobacion.")
+
+    verify = sub.add_parser("verify", help="Verifica una aprobacion registrada.")
+    verify.add_argument("--spec-id", required=True)
+    verify.add_argument("--version", required=True)
+
+    revoke = sub.add_parser("revoke", help="Revoca una autorizacion.")
+    revoke.add_argument("--spec-id", required=True)
+    revoke.add_argument("--version", required=True)
+    revoke.add_argument("--event", required=True)
+    revoke.add_argument("--reason", required=True)
+
+    revoke_key = sub.add_parser("revoke-key", help="Revoca una clave de confianza.")
+    revoke_key.add_argument("key_id")
+    revoke_key.add_argument("--reason", required=True)
+
+    reconcile = sub.add_parser("reconcile", help="Cierra una auditoria incompleta.")
+    reconcile.add_argument("--note", required=True)
+
+    sub.add_parser("audit-verify", help="Verifica la cadena de auditoria.")
+    return parser
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="Autoridad de aprobacion de Spec-First Guardian.")
-    parser.add_argument("--config", default=None)
-    subparsers = parser.add_subparsers(dest="mode", required=True)
-
-    request_parser = subparsers.add_parser("request", help="Registra una solicitud de aprobacion.")
-    request_parser.add_argument("--spec", type=Path, required=True)
-    request_parser.add_argument("--project", required=True)
-    request_parser.add_argument("--scope", required=True)
-    request_parser.add_argument("--operations", action="append", required=True)
-    request_parser.add_argument("--paths", action="append", required=True)
-    request_parser.add_argument("--requirements", action="append", required=True)
-    request_parser.add_argument("--tasks", action="append", required=True)
-    request_parser.add_argument("--approver", required=True)
-    request_parser.add_argument("--expires-at", default=None)
-    request_parser.add_argument("--out", type=Path, required=True)
-
-    approve_parser = subparsers.add_parser("approve", help="Firma una solicitud con identidad autenticada.")
-    approve_parser.add_argument("--request", type=Path, required=True)
-    approve_parser.add_argument("--event", type=Path, required=True)
-    approve_parser.add_argument("--out", type=Path, required=True)
-
-    verify_parser = subparsers.add_parser("verify", help="Verifica una autorizacion firmada.")
-    verify_parser.add_argument("--approval", type=Path, required=True)
-
-    args = parser.parse_args(argv)
-    config = load_config(args.config)
-    service = build_service(config)
-
-    if args.mode == "request":
-        text = args.spec.read_text(encoding="utf-8")
-        frontmatter = validate.parse_frontmatter(text)
-        request = service.register_request(
-            spec_id=str(frontmatter.get("spec_id") or ""),
-            project=args.project,
-            version=str(frontmatter.get("version") or ""),
-            spec_text=text,
-            expected_approver=args.approver,
-            scope=args.scope,
-            operations=_split(args.operations),
-            authorized_paths=_split(args.paths),
-            requirements=_split(args.requirements),
-            tasks=_split(args.tasks),
-            expires_at=args.expires_at,
-        )
-        if request is None:
-            print("Solicitud rechazada: alcance incompleto o datos invalidos.")
-            return 1
-        args.out.write_text(json.dumps(request, indent=2, ensure_ascii=False), encoding="utf-8")
-        print(f"Solicitud registrada: {request['request_id']}")
+    args = _parser().parse_args(argv)
+    try:
+        client = _client(args)
+        if args.command == "status":
+            _print(client.status())
+        elif args.command == "request":
+            _print(
+                client.request_approval(
+                    project=args.project,
+                    spec=args.spec,
+                    scope=args.scope,
+                    operations=args.operations,
+                    paths=args.paths,
+                    requirements=args.requirements,
+                    tasks=args.tasks,
+                    expires_at=args.expires_at,
+                )
+            )
+        elif args.command == "pending":
+            _print(client.pending())
+        elif args.command == "challenge":
+            _print(client.challenge(args.request_id))
+        elif args.command == "approve":
+            if not args.confirm:
+                print("La aprobacion exige confirmacion explicita (--confirm).", file=sys.stderr)
+                return 2
+            token = None
+            if args.id_token_file:
+                token = Path(args.id_token_file).read_text(encoding="utf-8").strip()
+            identity = {"subject": args.test_identity, "confirmed": True} if args.test_identity else None
+            _print(client.approve(args.request_id, args.challenge, id_token=token, test_identity=identity))
+        elif args.command == "verify":
+            _print(client.call("verify_approval", {"spec_id": args.spec_id, "version": args.version}))
+        elif args.command == "revoke":
+            _print(
+                client.revoke(
+                    spec_id=args.spec_id,
+                    version=args.version,
+                    authorization_event_id=args.event,
+                    reason=args.reason,
+                )
+            )
+        elif args.command == "revoke-key":
+            _print(client.revoke_key(args.key_id, args.reason))
+        elif args.command == "reconcile":
+            _print(client.reconcile(args.note))
+        elif args.command == "audit-verify":
+            _print(client.audit_verify())
         return 0
-
-    if args.mode == "approve":
-        request = json.loads(args.request.read_text(encoding="utf-8"))
-        event = json.loads(args.event.read_text(encoding="utf-8"))
-        if not isinstance(request, dict) or not isinstance(event, dict):
-            print("Solicitud o evento invalidos.")
-            return 1
-        if not service.import_request(request):
-            print("Solicitud invalida o incompleta.")
-            return 1
-        record = service.approve_request(str(request.get("request_id") or ""), event)
-        if record is None:
-            print("Aprobacion denegada: identidad no autenticada o firma no disponible.")
-            return 1
-        args.out.write_text(json.dumps(record, indent=2, ensure_ascii=False), encoding="utf-8")
-        print("Autorizacion firmada.")
-        return 0
-
-    approval = json.loads(args.approval.read_text(encoding="utf-8"))
-    if not service.verify(approval):
-        print("Autorizacion NO verificable.")
+    except authority_client.AuthorityDenied as error:
+        print(json.dumps({"ok": False, "denied": str(error)}, ensure_ascii=False), file=sys.stderr)
         return 1
-    print(f"Autorizacion valida para {approval.get('spec_id')} v{approval.get('version')}.")
-    return 0
+    except authority_client.AuthorityUnavailable as error:
+        print(json.dumps({"ok": False, "unavailable": str(error)}, ensure_ascii=False), file=sys.stderr)
+        return 3
 
 
 if __name__ == "__main__":

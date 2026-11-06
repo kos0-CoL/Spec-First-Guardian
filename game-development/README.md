@@ -1,51 +1,82 @@
 # Spec-First Guardian (SPEC-001)
 
-Skill obligatoria de gobernanza del desarrollo asistido por inteligencia artificial.
+Gobernanza del desarrollo asistido por IA: **ninguna implementación sin una SPEC
+aprobada explícitamente por una persona**.
 
-## Propósito
+## Regla fundamental
 
-**NINGUNA implementación sin una SPEC aprobada explícitamente por el usuario.**
+La aprobación pertenece a una persona autenticada. Ningún agente, subagente u
+orquestador puede aprobar, firmar, revocar ni registrar claves.
 
-La aprobación siempre corresponde a un usuario humano autenticado. Ningún agente,
-subagente u orquestador puede sustituirla, firmarla ni registrarla.
+## Arquitectura: dos dominios separados
 
-## Arquitectura de aprobación (única)
+```
+  DOMINIO A (agentes, UID agente)          DOMINIO B (autoridad, UID servicio)
+  ───────────────────────────────          ────────────────────────────────
+  leer proyecto                           clave privada Ed25519 (0600)
+  redactar SPEC                           almacén de claves de confianza
+  preparar alcance                        proveedor OIDC
+  solicitar aprobación  ─── socket ───▶   desafío de un solo uso
+  solicitar operaciones  ── Unix ────▶    firma de autorizaciones
+  recibir decisión                        registro de revocaciones
+                                          escritura real del workspace
+                                          auditoría encadenada
+```
 
-Existe **una sola** autoridad de aprobación:
+La frontera es de **proceso y de identidad del sistema operativo**, no de clases.
+Un agente puede importar el paquete Python que quiera: no tiene la clave, no
+puede registrar claves y no puede firmar. La autoridad verifica el UID del par
+con `SO_PEERCRED` en cada conexión.
 
-| Componente | Responsabilidad |
-|---|---|
-| `scripts/approval_service.py` | Identidad humana, firma Ed25519 con backend protegido, verificación contra almacén de confianza. |
-| `scripts/revocation_registry.py` | Registro de revocaciones firmado, fuera del workspace, con estados diferenciados. |
-| `scripts/validate.py` | Validación documental, de requisitos, criptográfica, de identidad, de revocación y de alcance. Resultados independientes. |
-| `scripts/implementation_gate.py` | Intermediario real de escritura: autoriza y ejecuta. |
-| `scripts/enforce.py` | CLI de decisión (`evaluate`) y ejecución (`apply`). |
-| `scripts/approval_cli.py` | CLI de la autoridad: registra solicitudes, firma aprobaciones y verifica. |
+| Componente | Dominio | Función |
+|---|---|---|
+| `scripts/authority_service.py` | B | Servicio por socket Unix: solicitudes, desafíos, firma, revocaciones, ejecución y auditoría. |
+| `scripts/implementation_gate.py` | B | Ejecuta escrituras ancladas a descriptores dentro del proceso de autoridad. |
+| `scripts/safe_fs.py` | B | `openat`/`dir_fd`/`O_NOFOLLOW`: elimina la re-resolución de rutas (TOCTOU). |
+| `scripts/audit_chain.py` | B | Auditoría encadenada con intención, resultado y bloqueo por cierre ausente. |
+| `scripts/workspace_guard.py` | B | Verifica/aplica permisos del workspace y declara `NO PROTEGIDO` cuando no hay separación real. |
+| `scripts/install_authority.sh` | B | Instalación Linux: usuario de sistema, directorios, clave, systemd. |
+| `scripts/authority_client.py` | A | Única superficie del agente: IPC, sin claves. |
+| `scripts/enforce.py` | A | Pide evaluación o ejecución a la autoridad. |
+| `scripts/approval_cli.py` | B | Consola de la autoridad (revisar, desafiar, aprobar, revocar, reconciliar). |
+| `scripts/validate.py` | A/B | Validación documental y motor de autorización compartido. |
+| `scripts/approval_service.py` | B | Identidad, firma y verificación Ed25519. |
+| `scripts/revocation_registry.py` | B | Registro firmado de revocaciones. |
 
-No hay HMAC, ni clave por defecto, ni firma local de autorizaciones. La única
-criptografía de autorización es Ed25519 con clave pública resuelta en un almacén
-de confianza externo.
+## Flujo de aprobación
 
-## Flujo
+1. El agente registra la solicitud (`request`): la autoridad lee la SPEC del
+   workspace, valida el documento, comprueba que requisitos y tareas existen
+   realmente en él y calcula la huella SHA-256.
+2. La persona administradora revisa (`pending`) y obtiene un desafío de un solo
+   uso (`challenge`) ligado a solicitud, huella y alcance.
+3. La persona confirma (`approve`) con su identidad OIDC; la autoridad vuelve a
+   leer la SPEC, recalcula la huella y solo entonces firma.
+4. Cada operación se autoriza contra esa firma, el alcance, las revocaciones y la
+   huella actual; la escritura la ejecuta la autoridad.
 
-1. El agente redacta la SPEC (plantilla `templates/technical-specification.md`).
-2. La autoridad registra la solicitud con la huella del contenido y el alcance exacto.
-3. El usuario se autentica ante el proveedor de identidad y confirma.
-4. La autoridad firma la autorización (identidad + huella + alcance + vigencia).
-5. El agente solicita operaciones al Implementation Gate con contexto completo.
-6. El gate verifica firma, identidad, revocaciones, alcance, ruta y hash de la SPEC.
-7. Solo entonces ejecuta la escritura y la registra en el audit log.
+El desafío se consume antes de firmar: un fallo posterior no permite reutilizarlo.
+Las solicitudes se guardan con integridad SHA-256; una solicitud alterada se
+rechaza antes de emitir desafío.
 
 ## Uso
 
+Agente:
+
 ```bash
-python scripts/validate.py <spec.md> [--approval <registro.json>] [--json]
-python scripts/generate_report.py <spec.md> [--approval <registro.json>]
-python scripts/enforce.py evaluate --context operacion.json [--spec <spec.md>] [--approval <registro.json>]
-python scripts/enforce.py apply    --context operacion.json [--spec <spec.md>] [--approval <registro.json>]
+export SPEC_GUARDIAN_AUTHORITY_SOCKET=/run/spec-guardian/authority.sock
+export SPEC_GUARDIAN_AUTHORITY_UID=<uid del servicio>
+
+python scripts/approval_cli.py request --project Spec-First-Guardian \
+  --spec SPEC-001.md --scope IMPLEMENTACION \
+  --operations create_file modify_file --paths src/code.py \
+  --requirements RF-001 --tasks TASK-001
+
+python scripts/enforce.py evaluate --context operacion.json
+python scripts/enforce.py apply    --context operacion.json
 ```
 
-Contexto de operación (todos los campos son obligatorios; no se completan solos):
+Contexto (todos los campos son obligatorios; la autoridad impone el workspace):
 
 ```json
 {
@@ -57,71 +88,100 @@ Contexto de operación (todos los campos son obligatorios; no se completan solos
   "task": "TASK-001",
   "operation_type": "create_file",
   "path": "src/code.py",
-  "workspace_root": "/ruta/absoluta/al/workspace",
-  "content": "contenido a escribir"
+  "workspace_root": "/srv/proyecto",
+  "content": "print('hola')\n"
 }
 ```
 
-Lado de la autoridad (nunca en el proceso del agente):
+Autoridad (UID administrador):
 
 ```bash
-export SPEC_GUARDIAN_AUTHORITY_CONFIG=/etc/spec-guardian/authority.json
-python scripts/approval_cli.py request --spec SPEC.md --project ... --scope ... \
-  --operations create_file --paths src/code.py --requirements RF-001 --tasks TASK-001 \
-  --approver usuario --out request.json
-python scripts/approval_cli.py approve --request request.json --event event.json --out approval.json
-python scripts/approval_cli.py verify --approval approval.json
+python scripts/approval_cli.py pending
+python scripts/approval_cli.py challenge REQ-...
+python scripts/approval_cli.py approve REQ-... --challenge ... --id-token-file token.txt --confirm
+python scripts/approval_cli.py verify --spec-id SPEC-001 --version 1.0.0
+python scripts/approval_cli.py revoke --spec-id SPEC-001 --version 1.0.0 --event EVT-... --reason "..."
+python scripts/approval_cli.py audit-verify
+python scripts/approval_cli.py reconcile --note "..."
 ```
 
-## Configuración (supervisor)
+## Instalación (Linux)
 
-| Variable | Contenido |
-|---|---|
-| `SPEC_GUARDIAN_TRUSTED_KEYS` | Ruta a `trusted_keys.json` (0600, fuera del workspace). |
-| `SPEC_GUARDIAN_REVOCATIONS_DIR` | Directorio de registros firmados (por defecto `~/.local/state/spec-guardian/revocations`). |
-| `SPEC_GUARDIAN_AUDIT_LOG` | Ruta del audit log del gate. |
-| `SPEC_GUARDIAN_WORKSPACE` | Workspace del agente (para comprobar protección de rutas). |
-| `SPEC_GUARDIAN_AUTHORITY_CONFIG` | Configuración de la autoridad (solo lado confiable). |
+```bash
+sudo ./scripts/install_authority.sh --project-root /srv/proyecto \
+     --agent-uid 1001 --admin-uid 1000
+```
 
-`trusted_keys.json`:
+Crea el usuario `spec-guardian`, `/etc/spec-guardian/authority.json` (modo 0640),
+`/var/lib/spec-guardian` (0700), la clave de firma (0600), el almacén de confianza
+y la unidad systemd. Se niega si el UID del servicio coincide con el del agente o
+el administrador, o si agente y administrador comparten UID.
+
+El workspace queda propiedad del servicio y sin escritura para grupo u otros. El
+estado se verifica con:
+
+```bash
+python scripts/workspace_guard.py verify /srv/proyecto \
+  --service-uid <uid servicio> --agent-uid <uid agente>
+```
+
+Sin separación real de UID, el informe es `"protected": false, "same_uid": true`.
+
+## Configuración de la autoridad
+
+`/etc/spec-guardian/authority.json` (0620/0640, root:spec-guardian):
 
 ```json
 {
-  "keys": [
-    {
-      "key_id": "KEY-2026-11-05-001",
-      "issuer": "spec-guardian-authority",
-      "subject": "usuario",
-      "public_key_pem": "-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----\n",
-      "revoked": false
-    }
-  ]
+  "environment": "production",
+  "socket_path": "/run/spec-guardian/authority.sock",
+  "state_dir": "/var/lib/spec-guardian",
+  "projects": {"Spec-First-Guardian": "/srv/proyecto"},
+  "admin_uids": [1000],
+  "clients": [{"uid": 1001, "agents": ["agente-1"], "delegates": {"agente-1": ["subagente-1"]}}],
+  "approver": "usuario",
+  "trusted_keys_file": "/var/lib/spec-guardian/keys/trusted_keys.json",
+  "revocations_dir": "/var/lib/spec-guardian/revocations",
+  "audit_log": "/var/lib/spec-guardian/audit.jsonl",
+  "signing_key_file": "/var/lib/spec-guardian/keys/signing_key.pem",
+  "key_id": "KEY-AUTHORITY-001",
+  "issuer": "spec-guardian-authority",
+  "oidc": {"issuer": "https://idp", "audience": "spec-guardian", "jwks_url": "https://idp/.well-known/jwks.json"},
+  "challenge_ttl_seconds": 180,
+  "require_distinct_uid": true,
+  "allow_simulated_identity": false
 }
 ```
 
+En `production` la autoridad **no arranca** si: el UID del servicio aparece como
+cliente o administrador; agente y administrador comparten UID; falta OIDC; falta
+la clave; o los archivos/directorios no tienen propietario y permisos correctos.
+
 ## Seguridad
 
-- Sin almacén de confianza configurado, toda aprobación se deniega.
+- Sin firma verificable contra el almacén de confianza no hay implementación.
 - `key_id` desconocido, clave revocada, emisor o sujeto distintos: denegación.
 - Los campos `verified`, `revoked`, `signature_valid` o `public_key` del registro
-  **no** se consultan: nunca son fuente de confianza.
-- Listas de alcance vacías no autorizan nada; `ALCANCE_TOTAL` no es un bypass.
-- Si la SPEC cambia después de la aprobación, la autorización deja de servir.
-- Registro de revocaciones ausente, corrupto, sin firma o dentro del workspace:
-  la comprobación no se considera realizada y se deniega.
-- Toda operación sin contexto completo se deniega.
+  no se consultan.
+- Un `TrustedKeyStore` construido a mano nunca está "configurado": solo una carga
+  desde archivo protegido lo habilita.
+- Listas vacías no autorizan; `ALCANCE_TOTAL` no es un bypass.
+- Requisitos y tareas deben existir en la SPEC; un identificador inventado no se
+  autoriza aunque esté en la lista firmada.
+- Registro de revocaciones ausente, corrupto, sin firma o inseguro: denegación.
+- El desafío de aprobación es de un solo uso y caduca.
 
 ## Enforcement real
 
-Controladas por el gate: `create_file`, `modify_file`, `overwrite_file`,
-`delete_file` (resolución segura de rutas, rechazo de symlinks, escritura atómica,
-audit log obligatorio).
+Ejecutadas por la autoridad: `create_file`, `modify_file`, `overwrite_file`,
+`delete_file`, con rutas ancladas a descriptores (`dir_fd`), rechazo de enlaces
+simbólicos, escritura atómica en el mismo directorio y verificación del digest.
 
-**NO protegidas** por el gate: escrituras directas del agente con acceso al
-filesystem, ejecución de procesos externos, instalación de dependencias,
-migraciones y cambios de configuración fuera del gate. Requieren aislamiento del
-sistema operativo, contenedor o workspace de solo lectura; el gate no puede
-impedirlas por sí solo.
+**NO protegidas** (el gate las deniega, pero no puede impedir que un agente las
+ejecute por su cuenta): scripts y procesos externos, instalación de dependencias,
+migraciones, cambios de configuración y operaciones de subagentes fuera del
+protocolo. Solo el aislamiento del sistema operativo (UID distinto y workspace sin
+permisos de escritura para el agente) las bloquea de verdad.
 
 ## Pruebas
 
@@ -129,18 +189,16 @@ impedirlas por sí solo.
 python -m unittest discover -s tests -p "test_*.py"
 ```
 
-## Estado de los registros incluidos en el repositorio
-
-`specs/approvals/SPEC-001.json` y `specs/revocations/SPEC-001.json` son registros
-**legados**: se firmaron con el contrato anterior (sin identidad autenticada, sin
-alcance por operación y sin firma del registro de revocaciones). El runtime los
-rechaza y no autorizan ninguna operación. Para habilitar implementación, la
-autoridad debe emitir una autorización nueva con `approval_cli.py` y publicar un
-registro de revocaciones firmado en `SPEC_GUARDIAN_REVOCATIONS_DIR`.
+Las pruebas unitarias usan identidad simulada y un UID compartido: demuestran el
+contrato del servicio, **no** el aislamiento entre UID distintos.
 
 ## Limitaciones
 
-- El proveedor OIDC real requiere emisor, audiencia y JWKS configurados; sin ellos
-  la firma queda bloqueada (por diseño).
-- El proveedor simulado solo se acepta con `environment="test"` y nunca en producción.
-- La integración con orquestadores requiere adaptadores que llamen al gate.
+- El proveedor OIDC está implementado, pero sin un IdP real configurado no hay
+  aprobaciones de producción.
+- El aislamiento por UID se implementa y verifica con `workspace_guard.py` y el
+  instalador; en este entorno de desarrollo no se han creado dos cuentas reales,
+  por lo que el estado local es `NO PROTEGIDO`.
+- Windows y macOS no están adaptados ni probados: solo Linux.
+- Los registros incluidos en `specs/approvals/` y `specs/revocations/` son legados
+  y no autorizan nada en el modelo actual.

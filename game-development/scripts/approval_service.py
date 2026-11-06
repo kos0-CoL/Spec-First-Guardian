@@ -353,14 +353,17 @@ class TrustedKeyStore:
     que exige un archivo fuera del workspace con permisos restrictivos.
     """
 
-    def __init__(self, keys: dict | None = None, source: Path | None = None, error: str | None = None) -> None:
+    def __init__(self, keys: dict | None = None, source: Path | None = None, error: str | None = None, loaded: bool = False) -> None:
         self._keys: dict[str, TrustedKey] = dict(keys or {})
         self.source = source
         self.error = error
+        # Solo una carga real desde archivo protegido marca el almacen como utilizable.
+        # Construirlo a mano con claves o con una ruta arbitraria no lo habilita.
+        self._loaded = bool(loaded)
 
     @property
     def configured(self) -> bool:
-        return self.error is None and self.source is not None
+        return self._loaded and self.error is None and self.source is not None
 
     @classmethod
     def unconfigured(cls, reason: str = "almacen de confianza no configurado") -> "TrustedKeyStore":
@@ -409,7 +412,7 @@ class TrustedKeyStore:
                 public_key_pem=pem.encode("utf-8"),
                 revoked=bool(item.get("revoked", False)),
             )
-        return cls(keys, source=resolved)
+        return cls(keys, source=resolved, loaded=True)
 
     def entry(self, key_id: str) -> TrustedKey | None:
         return self._keys.get(str(key_id or ""))
@@ -432,6 +435,11 @@ def get_default_key_store(workspace_root: Path | str | None = None) -> TrustedKe
 
     El agente no puede declarar claves por parametro ni por variables con
     material criptografico: solo se acepta una ruta a configuracion protegida.
+
+    Uso previsto: herramientas de **solo lectura** (validacion e informes). El
+    camino de implementacion no usa esta funcion: la autoridad pasa su propio
+    almacen cargado desde ``authority.json`` y nunca lee configuracion de
+    confianza del entorno del agente.
     """
     root = workspace_root or _env_path("SPEC_GUARDIAN_WORKSPACE") or Path.cwd()
     return TrustedKeyStore.from_config_file(_env_path("SPEC_GUARDIAN_TRUSTED_KEYS"), workspace_root=root)

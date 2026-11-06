@@ -1,61 +1,74 @@
-# Contrato de Enforcement — SPEC-001
-
-Interfaz obligatoria para el control técnico de operaciones de escritura.
+# Contrato de enforcement — SPEC-001
 
 ## Cadena de control
 
 ```
-AGENTE
-  → IMPLEMENTATION GATE        (implementation_gate.py)
-  → MOTOR DE AUTORIZACIÓN      (validate.authorize_operation)
-  → SERVICIO DE APROBACIÓN    (approval_service.verify_approval)
-  → REGISTRO DE REVOCACIONES  (revocation_registry)
-  → VALIDACIÓN DE ALCANCE Y RUTA
-  → ESCRITURA EJECUTADA
+AGENTE (UID agente)
+  │  socket Unix + SO_PEERCRED
+  ▼
+AUTORIDAD (UID servicio)          ← dominio B, único con la clave
+  → auditoría: intención
+  → Implementation Gate
+      → motor de autorización (firma, identidad, revocación, alcance, huella)
+      → safe_fs (dir_fd, O_NOFOLLOW, escritura atómica)
+  → auditoría: resultado
+  ▼
+WORKSPACE (propiedad del servicio, sin escritura para el agente)
 ```
 
-El gate **ejecuta** la operación autorizada; no se limita a devolver una decisión.
+El agente no ejecuta la escritura: la pide. La autoridad impone el workspace, la
+identidad del agente y el alcance; no acepta ninguno de esos datos como prueba.
 
-## Operaciones controladas
+## Controles por operación
+
+1. UID del par autorizado (`SO_PEERCRED`); un UID desconocido no puede pedir nada.
+2. Identidad de agente resuelta por UID, no por lo que declare el cliente.
+3. Cadena de delegación para subagentes: cada salto debe estar configurado y el
+   agente final debe coincidir con el último eslabón.
+4. Contexto completo: agente, proyecto, SPEC, versión, requisito, tarea,
+   operación, ruta y workspace.
+5. Firma Ed25519 verificada contra el almacén de confianza del servicio.
+6. Identidad humana autenticada ligada al sujeto de la clave.
+7. Revocaciones comprobadas en registro firmado gestionado por la autoridad.
+8. Proyecto, versión, requisito, tarea y tipo de operación dentro del alcance.
+9. Requisito y tarea existen realmente en la SPEC aprobada.
+10. Documento válido: secciones, estado `APPROVED`, criterios y requisitos.
+11. Huella SHA-256 del documento leído en el momento de la operación.
+12. Ruta relativa, sin traversal ni enlaces; escritura sobre descriptores ya
+    abiertos, sin re-resolución (TOCTOU).
+13. Auditoría de intención antes de escribir y de resultado después.
+
+## Operaciones ejecutadas
 
 `create_file`, `modify_file`, `overwrite_file`, `delete_file`.
 
-Controles aplicados:
+`create` exige que no exista; `modify` que exista y sea regular; `overwrite`
+admite ambos; `delete` solo archivos regulares. Todo dentro del workspace, con
+permisos 0640 y fsync del archivo y del directorio.
 
-1. Contexto completo obligatorio: `agent`, `project`, `spec_id`, `version`,
-   `requirement`, `task`, `operation_type`, `path`, `workspace_root`.
-2. Firma Ed25519 verificada contra el almacén de confianza.
-3. Identidad humana autenticada ligada al sujeto de la clave.
-4. Revocaciones comprobadas en registro firmado y protegido.
-5. Proyecto, versión, requisito, tarea y operación dentro de las listas autorizadas.
-6. Ruta relativa, sin traversal, sin rutas absolutas, sin symlinks, dentro del workspace.
-7. Hash SHA-256 de la SPEC igual al firmado.
-8. Escritura atómica y audit log obligatorio (si no se puede auditar, se deniega).
+## Operaciones NO cubiertas
 
-## Operaciones NO protegidas por el gate
+- Ejecución de scripts y procesos externos.
+- Instalación de dependencias.
+- Migraciones de datos.
+- Cambios de configuración fuera del protocolo.
+- Operaciones de subagentes que no pasen por la autoridad.
 
-- Escrituras directas del agente con acceso al sistema de archivos.
-- Ejecución de scripts o procesos externos.
-- Instalación de dependencias y migraciones.
-- Cambios de configuración fuera del gate.
-- Operaciones de subagentes con su propio acceso al filesystem.
+El gate las **deniega** si se le piden, pero no puede impedir que un agente con
+acceso al sistema operativo las realice por otra vía. Se declaran `NO PROTEGIDO`
+hasta que el workspace sea de solo lectura para el UID del agente y los procesos
+estén restringidos por el sistema operativo o un contenedor.
 
-Estas vías requieren aislamiento del sistema operativo (usuario sin permisos de
-escritura, contenedor, montaje de solo lectura o servicio intermediario). El gate
-por sí solo no las bloquea y no se declara protección universal.
+## Auditoría
+
+- Cadena de hashes: alterar, borrar o insertar una línea rompe la verificación.
+- Intención previa: si no se puede registrar, la operación se deniega.
+- Resultado posterior: si falla, se crea un marcador de auditoría incompleta y
+  **se bloquean nuevas operaciones** hasta reconciliar (`approval_cli.py
+  reconcile`).
+- El marcador y el log son propiedad del servicio; el agente no puede escribirlos.
 
 ## Denegación por defecto
 
-Sin contexto completo, sin autorización verificable, con revocaciones no
-comprobadas o con cualquier error de lectura: denegar.
-
-## Registro
-
-Cada decisión (permitida o denegada) se escribe en el audit log con hora,
-contexto de operación y motivo. Si el registro falla, la operación se deniega.
-
-## Adaptadores
-
-Orquestador, CLI y subagentes deben invocar `enforce.py apply` (o
-`ImplementationGate.execute`) y no escribir directamente. Un adaptador que
-escriba por su cuenta queda fuera del control y debe declararse como tal.
+Sin contexto, sin autorización verificable, con revocaciones no comprobadas, con
+auditoría bloqueada o ante cualquier error de lectura: denegar.

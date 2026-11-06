@@ -62,6 +62,8 @@ HEADING_PATTERN = re.compile(r"^#{1,6}\s+(.+?)\s*$", re.MULTILINE)
 LIST_ITEM_PATTERN = re.compile(r"^\s*(?:[-*]\s+|\d+[.)]\s+|\u2022|\u00b7)\s*(.+)$")
 PENDING_MARKER_PATTERN = re.compile(r"\[[^\]\n]{1,120}\]")
 PENDING_DATE_PATTERN = re.compile(r"\bYYYY-MM-DD\b")
+REQUIREMENT_ID_PATTERN = re.compile(r"\b(?:RF|RNF)[-_]?\d+\b", re.IGNORECASE)
+TASK_ID_PATTERN = re.compile(r"\bTASK[-_]?\d+\b", re.IGNORECASE)
 
 REQUIRED_OPERATION_FIELDS = (
     "agent",
@@ -144,6 +146,53 @@ def pending_markers(text: str) -> list:
         if marker not in deduplicated:
             deduplicated.append(marker)
     return deduplicated
+
+
+def spec_identifiers(text: str) -> dict:
+    """Identificadores de requisitos y tareas que existen realmente en el documento."""
+    def canon(match: re.Match) -> str:
+        return re.sub(r"[-_]", "-", match.group(0).upper())
+
+    return {
+        "requirements": {canon(match) for match in REQUIREMENT_ID_PATTERN.finditer(text)},
+        "tasks": {canon(match) for match in TASK_ID_PATTERN.finditer(text)},
+    }
+
+
+def document_problems(text: str, require_approved: bool = False) -> list:
+    """Problemas documentales de una SPEC, compartidos por validacion y gate.
+
+    Es la unica fuente de verdad: el motor de autorizacion no puede considerar
+    valido un documento que esta funcion rechace. Con ``require_approved`` la
+    comprobacion es la del camino de implementacion (estado, requisitos y
+    criterios); sin el, solo la estructura del documento.
+    """
+    frontmatter = parse_frontmatter(text)
+    body = FRONTMATTER_PATTERN.sub("", text, count=1).strip()
+    spec_id = str(frontmatter.get("spec_id") or "")
+    status = str(frontmatter.get("status") or "").upper()
+    version = str(frontmatter.get("version") or "")
+    problems: list = list(validate_metadata_with_schema(frontmatter))
+    if not spec_id or not SPEC_ID_PATTERN.match(spec_id):
+        problems.append("El frontmatter debe definir un spec_id valido con formato SPEC-001.")
+    if status not in ALLOWED_STATUSES:
+        problems.append(f"Estado no valido: '{status}'.")
+    elif require_approved and status != "APPROVED":
+        problems.append(f"La SPEC no esta aprobada (estado actual: {status}).")
+    for section in REQUIRED_SECTIONS:
+        if not section_has_content(body, section):
+            problems.append(f"Falta o esta vacio la seccion requerida: '{section}'.")
+    markers = pending_markers(text)
+    if markers:
+        problems.append("La plantilla contiene marcadores pendientes sin completar: " + ", ".join(markers[:6]))
+    if status == "APPROVED" and not version:
+        problems.append("La SPEC aprobada no registra version.")
+    if require_approved:
+        if acceptance_criteria_count(body) == 0:
+            problems.append("La SPEC aprobada no define criterios de aceptacion verificables.")
+        if requirement_count(body) == 0:
+            problems.append("La SPEC aprobada no declara requisitos funcionales verificables.")
+    return problems
 
 
 def load_approval(path: Path | None) -> dict | None:
@@ -270,21 +319,11 @@ def validate_spec(path: Path, approval: dict | None = None, key_store=None, regi
     result["status"] = status or None
     result["version"] = version or None
 
-    errors: list = list(validate_metadata_with_schema(frontmatter))
+    errors: list = document_problems(text, require_approved=False)
     warnings: list = []
-
-    if not spec_id or not SPEC_ID_PATTERN.match(spec_id):
-        errors.append("El frontmatter debe definir un spec_id valido con formato SPEC-001.")
-    if status not in ALLOWED_STATUSES:
-        errors.append(f"Estado no valido: '{status}'.")
-    for section in REQUIRED_SECTIONS:
-        if not section_has_content(body, section):
-            errors.append(f"Falta o esta vacio la seccion requerida: '{section}'.")
 
     markers = pending_markers(text)
     result["template_complete"] = not markers
-    if markers:
-        errors.append("La plantilla contiene marcadores pendientes sin completar: " + ", ".join(markers[:6]))
 
     if status == "APPROVED" and not version:
         errors.append("La SPEC esta aprobada pero no registra version.")
@@ -365,7 +404,7 @@ def validate_spec(path: Path, approval: dict | None = None, key_store=None, regi
     return result
 
 
-def authorize_operation(approval: dict | None, operation: dict, key_store=None, spec_path: Path | None = None, registry=None, workspace_root=None) -> bool:
+def authorize_operation(approval: dict | None, operation: dict, key_store=None, spec_path: Path | None = None, registry=None, workspace_root=None, spec_text: str | None = None) -> bool:
     """Comprueba si una operacion concreta esta dentro del alcance autorizado.
 
     Requiere contexto completo; no completa campos ausentes y no trata
@@ -394,13 +433,26 @@ def authorize_operation(approval: dict | None, operation: dict, key_store=None, 
     check = _registry_check(registry, spec_id, version, str(approval.get("authorization_event_id") or ""))
     if not check.checked or check.revoked:
         return False
-    if spec_path is None:
-        return False
-    try:
-        current = Path(spec_path).read_text(encoding="utf-8")
-    except OSError:
-        return False
+    if spec_text is not None:
+        current = str(spec_text)
+    else:
+        if spec_path is None:
+            return False
+        try:
+            current = Path(spec_path).read_text(encoding="utf-8")
+        except OSError:
+            return False
     if hashlib.sha256(current.encode("utf-8")).hexdigest() != str(approval.get("fingerprint") or ""):
+        return False
+    # Correspondencia documental: la firma no sustituye a la SPEC.
+    if document_problems(current, require_approved=True):
+        return False
+    identifiers = spec_identifiers(current)
+    requirement = re.sub(r"[-_]", "-", str(operation.get("requirement") or "").upper())
+    task = re.sub(r"[-_]", "-", str(operation.get("task") or "").upper())
+    if requirement not in identifiers["requirements"]:
+        return False
+    if task not in identifiers["tasks"]:
         return False
     operations = approval.get("operations") or []
     authorized_paths = approval.get("authorized_paths") or []

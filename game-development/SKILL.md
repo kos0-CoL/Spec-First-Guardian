@@ -63,35 +63,52 @@ Cada etapa está detallada en `instructions/workflow.md`.
 - `examples/` — Ejemplos de especificaciones.
 - `assets/` — Esquemas (`schemas/`) y diagramas (`diagrams/`).
 
-## Autoridad de aprobación
+## Autoridad de aprobación (dominio separado)
 
-Una única autoridad: `scripts/approval_service.py` (Ed25519 + identidad humana +
-almacén de confianza externo). No existe firma HMAC, clave por defecto ni
-aprobación generada por el agente. La firma solo la produce el backend protegido
-de la autoridad; la verificación solo acepta claves del almacén configurado por el
-supervisor. Sin esa configuración, la implementación se deniega.
+La autoridad es un **servicio independiente** (`scripts/authority_service.py`)
+que corre con otro UID y habla por un socket Unix. Es el único proceso que tiene
+la clave privada Ed25519, el almacén de claves de confianza, el registro de
+revocaciones y la capacidad de escribir en el workspace.
 
-La aprobación vive en un registro externo firmado: identidad autenticada, huella
-del contenido, alcance, vigencia y revocaciones. El documento nunca es fuente de
-confianza de la aprobación.
+El agente no importa claves ni firma: solicita. La autoridad verifica el UID del
+par con `SO_PEERCRED`, exige identidad humana OIDC, emite un desafío de un solo
+uso ligado a la solicitud, la huella y el alcance, y solo entonces firma.
+
+No existe HMAC, clave por defecto, aprobación del agente ni registro de claves
+por el agente. Sin autoridad disponible o sin firma verificable, se deniega.
 
 ## Comandos
 
 ```bash
+export SPEC_GUARDIAN_AUTHORITY_SOCKET=/run/spec-guardian/authority.sock
+
 python scripts/validate.py <ruta-a-spec.md> [--approval <registro.json>] [--json]
 python scripts/generate_report.py <ruta-a-spec.md> [--approval <registro.json>]
+
+python scripts/approval_cli.py status
+python scripts/approval_cli.py request --project P --spec SPEC.md --scope S \
+  --operations create_file --paths src/x.py --requirements RF-001 --tasks TASK-001
+python scripts/approval_cli.py pending
+python scripts/approval_cli.py challenge REQ-...
+python scripts/approval_cli.py approve REQ-... --challenge ... --id-token-file token.txt --confirm
+
 python scripts/enforce.py evaluate --context operacion.json
 python scripts/enforce.py apply    --context operacion.json
 ```
 
-El agente debe solicitar cada escritura al Implementation Gate con contexto
-completo (proyecto, agente, SPEC, versión, requisito, tarea, operación, ruta y
-workspace). Sin contexto completo la operación se deniega.
+El agente debe solicitar cada escritura con contexto completo (proyecto, agente,
+SPEC, versión, requisito, tarea, operación, ruta y workspace). Sin contexto
+completo la operación se deniega.
 
 ## Enforcement real
 
-El gate ejecuta `create_file`, `modify_file`, `overwrite_file` y `delete_file`
-tras verificar firma, identidad, revocaciones, alcance, ruta y hash de la SPEC.
+La autoridad ejecuta `create_file`, `modify_file`, `overwrite_file` y
+`delete_file` sobre descriptores de directorio (`dir_fd`, `O_NOFOLLOW`), tras
+verificar firma, identidad, revocaciones, alcance, correspondencia con la SPEC,
+ruta y huella. Registra intención y resultado; si falta el cierre, bloquea nuevas
+operaciones.
+
 Las escrituras directas del agente, procesos externos, dependencias y migraciones
-fuera del gate **no** están protegidas: requieren aislamiento del sistema
-operativo. Ver `instructions/enforcement.md`.
+fuera del protocolo **no** están protegidas por el sistema: requieren aislamiento
+del sistema operativo y un workspace sin permisos de escritura para el agente.
+Ver `instructions/enforcement.md` y `instructions/authority.md`.
