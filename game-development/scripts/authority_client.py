@@ -326,14 +326,28 @@ class AuthorityClient:
             payload["test_identity"] = test_identity
         return self.call("approve", payload)
 
-    def revoke(self, **payload) -> dict:
+    def revoke(self, *, id_token: str | None = None, test_identity: dict | None = None, **payload) -> dict:
+        if id_token is not None:
+            payload["id_token"] = id_token
+        if test_identity is not None:
+            payload["test_identity"] = test_identity
         return self.call("revoke", payload)
 
-    def revoke_key(self, key_id: str, reason: str) -> dict:
-        return self.call("revoke_key", {"key_id": key_id, "reason": reason})
+    def revoke_key(self, key_id: str, reason: str, *, id_token: str | None = None, test_identity: dict | None = None) -> dict:
+        payload = {"key_id": key_id, "reason": reason}
+        if id_token is not None:
+            payload["id_token"] = id_token
+        if test_identity is not None:
+            payload["test_identity"] = test_identity
+        return self.call("revoke_key", payload)
 
-    def reconcile(self, note: str) -> dict:
-        return self.call("reconcile", {"note": note})
+    def reconcile(self, note: str, *, id_token: str | None = None, test_identity: dict | None = None) -> dict:
+        payload = {"note": note}
+        if id_token is not None:
+            payload["id_token"] = id_token
+        if test_identity is not None:
+            payload["test_identity"] = test_identity
+        return self.call("reconcile", payload)
 
     def audit_verify(self) -> dict:
         return self.call("audit_verify")

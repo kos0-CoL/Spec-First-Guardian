@@ -414,6 +414,13 @@ class Authority:
 
     def status(self) -> dict:
         valid, reason, count = self.audit.verify()
+        setup_ready = bool(self.config.environment == "test" or (
+            self.service.provider and getattr(self.service.provider, "configured", False)
+            and self.config.expected_approver_subject and self.signer and self.signer.available
+            and self.isolation == "enforced" and valid and not self.audit.is_blocked()
+        ))
+        operational_state = ("BLOCKED" if self.audit.is_blocked() or not valid else
+                             "SETUP_INCOMPLETE" if not setup_ready else "HEALTHY")
         return {
             "protocol": PROTOCOL_VERSION,
             "environment": self.config.environment,
@@ -425,12 +432,17 @@ class Authority:
             "audit_state": self.audit.health_state(),
             "audit_block_reason": self.audit.block_reason() if self.audit.is_blocked() else None,
             "audit_chain": {"valid": valid, "reason": reason, "events": count},
+            "installed": True,
+            "state": operational_state,
+            "setup_ready": setup_ready,
+            "approval_ready": bool(setup_ready and self.config.environment == "test"),
+            "deployment_note": "OIDC production remains blocked pending an Authorization Code + PKCE callback and server-managed session." if self.config.environment == "production" else None,
             "clients": [{"uid": grant.uid, "agents": list(grant.agents)} for grant in self.config.clients.values()],
         }
 
     def _require_healthy_audit(self) -> None:
         valid, reason, _ = self.audit.verify()
-        if not valid or (self.audit.is_blocked() and os.path.lexists(self.audit.init_path)):
+        if not valid or self.audit.is_blocked() or self._audit_unhealthy:
             self._audit_unhealthy = True
             raise Denied(f"auditoria no saludable ({reason}); requiere reconciliacion")
 
@@ -726,6 +738,8 @@ class Authority:
             request["oidc_state"] = secrets.token_urlsafe(32)
             request["oidc_nonce"] = secrets.token_urlsafe(32)
             request["session_id"] = secrets.token_urlsafe(32)
+            request["review_next_offset"] = 0
+            request["review_fingerprint"] = ""
             self._save_request(request)
             self.audit.append({"stage": "challenge", "request_id": request_id, "admin_uid": uid})
         return {
@@ -735,7 +749,6 @@ class Authority:
             "fingerprint": request["fingerprint"],
             "scope_hash": request["scope_hash"],
             "oidc_state": request["oidc_state"],
-            "oidc_nonce": request["oidc_nonce"],
             "session_id": request["session_id"],
             "review": {
                 "project": request.get("project"),
@@ -747,15 +760,14 @@ class Authority:
                 "requirements": request.get("requirements"),
                 "tasks": request.get("tasks"),
                 "scope": request.get("scope"),
-                "spec_sha256": request.get("fingerprint"),
                 # El contenido se obtiene en paginas ligadas a esta huella.
                 "spec_sha256": request.get("fingerprint"),
                 "spec_length": len(spec_text),
                 "review_complete": False,
                 "review_page_size": 4000,
                 "review_pages": (len(spec_text) + 3999) // 4000,
-                "review_base_offset": 0,
-                "preview_truncated": True,
+                "preview_truncated": len(spec_text) > 4000,
+                "preview": spec_text[:4000],
             },
         }
 
@@ -765,20 +777,40 @@ class Authority:
         limit = payload.get("limit", 4000)
         if not isinstance(offset, int) or not isinstance(limit, int) or offset < 0 or limit < 1 or limit > 4000:
             raise Denied("paginacion de SPEC invalida")
-        request = self._load_request(request_id)
-        root = self.config.project_root(str(request.get("project") or ""))
-        root_fd = safe_fs.open_root(root)
-        try:
-            text = safe_fs.read_file(root_fd, str(request.get("spec_path") or "")).decode("utf-8")
-        finally:
-            os.close(root_fd)
-        fingerprint = hashlib.sha256(text.encode("utf-8")).hexdigest()
-        if fingerprint != request.get("fingerprint") or fingerprint != payload.get("fingerprint"):
-            raise Denied("la SPEC cambio o la pagina no corresponde a la huella de revision")
-        page = text[offset:offset + limit]
-        return {"request_id": request_id, "spec_id": request["spec_id"], "version": request["version"],
-                "fingerprint": fingerprint, "offset": offset, "next_offset": offset + len(page),
-                "complete": offset + len(page) >= len(text), "content": page}
+        with self.lock:
+            request = self._load_request(request_id)
+            root = self.config.project_root(str(request.get("project") or ""))
+            root_fd = safe_fs.open_root(root)
+            try:
+                text = safe_fs.read_file(root_fd, str(request.get("spec_path") or "")).decode("utf-8")
+            finally:
+                os.close(root_fd)
+            fingerprint = hashlib.sha256(text.encode("utf-8")).hexdigest()
+            if fingerprint != request.get("fingerprint") or fingerprint != payload.get("fingerprint"):
+                self._invalidate_review(request)
+                raise Denied("la SPEC cambio; solicitud y desafío invalidados, genere una nueva solicitud")
+            if request.get("status") not in (None, "PENDING_USER_APPROVAL") or not request.get("challenge_hash"):
+                raise Denied("no existe una sesión de revisión activa para esta solicitud")
+            expected_offset = int(request.get("review_next_offset") or 0)
+            if offset != expected_offset:
+                raise Denied("página fuera de secuencia: debe continuar desde el siguiente offset pendiente")
+            page = text[offset:offset + limit]
+            next_offset = offset + len(page)
+            request["review_next_offset"] = next_offset
+            request["review_fingerprint"] = fingerprint
+            self._save_request(request)
+            return {"request_id": request_id, "spec_id": request["spec_id"], "version": request["version"],
+                    "fingerprint": fingerprint, "offset": offset, "next_offset": next_offset,
+                    "complete": next_offset == len(text), "content": page}
+
+    def _invalidate_review(self, request: dict) -> None:
+        request["status"] = "SUPERSEDED"
+        request["challenge_used"] = True
+        request["challenge_hash"] = ""
+        request["oidc_state"] = ""
+        request["oidc_nonce"] = ""
+        request["session_id"] = ""
+        self._save_request(request)
 
     def approve(self, uid: int, payload: dict) -> dict:
         self._require_healthy_audit()
@@ -797,15 +829,14 @@ class Authority:
                 raise Denied("sesion de aprobacion ausente o incorrecta")
             if not stored or hashlib.sha256(token.encode("utf-8")).hexdigest() != stored:
                 raise Denied("desafio de aprobacion invalido")
+            if request.get("challenge_used") or request.get("status") == "APPROVED":
+                raise Denied("desafio de aprobacion ya utilizado")
             if request.get("challenge_used"):
                 raise Denied("desafio de aprobacion ya utilizado")
             expires_at = approval_service._parse_iso(request.get("challenge_expires_at"))
             if expires_at is None or _now() > expires_at:
                 raise Denied("desafio de aprobacion caducado")
             # El desafio se consume antes de firmar: un fallo posterior no lo reutiliza.
-            request["challenge_used"] = True
-            self._save_request(request)
-
             project = str(request.get("project") or "")
             root = self.config.project_root(project)
             try:
@@ -818,20 +849,29 @@ class Authority:
                 raise Denied(f"no se pudo releer la SPEC: {error}") from error
             current_fingerprint = hashlib.sha256(current.encode("utf-8")).hexdigest()
             if current_fingerprint != str(request.get("fingerprint") or ""):
+                self._invalidate_review(request)
                 raise Denied("la SPEC cambio despues de registrar la solicitud")
             scope_hash = _sha256({"project": request["project"], "spec_id": request["spec_id"], "version": request["version"], "operations": sorted(request["operations"]), "paths": sorted(request["authorized_paths"]), "requirements": sorted(request["requirements"]), "tasks": sorted(request["tasks"]), "scope": request["scope"]})
             if scope_hash != request.get("scope_hash") or payload.get("scope_hash") != scope_hash:
                 raise Denied("el alcance cambio despues de la revision")
-            review_pages = max(1, (len(current) + 3999) // 4000)
-            if payload.get("review_complete") is not True or payload.get("review_pages") != review_pages or payload.get("review_fingerprint") != current_fingerprint:
+            pages_required = max(1, (len(current) + 3999) // 4000)
+            if (request.get("review_next_offset") != len(current)
+                    or request.get("review_fingerprint") != current_fingerprint
+                    or payload.get("review_complete") is not True
+                    or payload.get("review_fingerprint") != current_fingerprint):
                 raise Denied("revision completa de la SPEC requerida antes de aprobar")
+            if payload.get("review_pages") != pages_required:
+                raise Denied("el conteo de paginas revisadas no coincide con la SPEC")
             problems = validate.document_problems(current, require_approved=True)
             if problems:
                 raise Denied("documento no aprobable: " + "; ".join(problems[:4]))
 
             if not self.service.import_request(request):
                 raise Denied("solicitud no reconstruible por la autoridad")
-            event = self._approval_event(payload)
+            request["challenge_used"] = True
+            request["status"] = "APPROVED"
+            self._save_request(request)
+            event = self._approval_event(payload, request)
             record = self.service.approve_request(request_id, event)
             if record is None:
                 raise Denied("firma de aprobacion denegada")
@@ -859,18 +899,22 @@ class Authority:
             )
         return {"approval": record, "request_id": request_id}
 
-    def _approval_event(self, payload: dict) -> dict:
+    def _approval_event(self, payload: dict, request: dict | None = None) -> dict:
         if self.config.environment == "test" and self.config.allow_simulated_identity:
             identity = payload.get("test_identity")
-            if not isinstance(identity, dict) or identity.get("confirmed") is not True:
+            if not isinstance(identity, dict):
                 raise Denied("identidad de prueba no confirmada")
-            return {"type": "human_approval", "subject": str(identity.get("subject") or ""), "confirmed": True}
+            if identity.get("confirmed") is not True:
+                raise Denied("identidad de prueba no confirmada")
+            return {"type": "human_approval", "subject": str(identity.get("subject") or ""), "confirmed": True,
+                    "expected_nonce": request.get("oidc_nonce") if request else None}
         token = payload.get("id_token")
         if not isinstance(token, str) or not token.strip():
             raise Denied("falta el token OIDC de la persona que aprueba")
-        # Never treat an unverified token parse as authentication. The current
-        # transport has no browser callback/session capable of binding state,
-        # nonce and PKCE to a verified authorization-code response.
+        if request is None:
+            raise Denied("no hay estado de solicitud para autenticar")
+        # No verified authorization-code callback/session binds state, nonce and
+        # PKCE to this request; never accept an agent-supplied token as login.
         raise Denied("SETUP INCOMPLETE: se requiere callback OIDC con Authorization Code + PKCE")
 
     def verify_approval(self, payload: dict) -> dict:
@@ -942,7 +986,6 @@ class Authority:
         if not (spec_id and version and event_id and reason):
             raise Denied("revocacion incompleta")
         entries = self._read_revocations(spec_id)
-        admin_identity = self._admin_identity(uid, payload)
         entries.append(
             {
                 "authorization_event_id": event_id,
@@ -955,18 +998,17 @@ class Authority:
             }
         )
         self._write_revocations(spec_id, entries)
-        self.audit.append(
-            {
-                "stage": "revocation",
-                "spec_id": spec_id,
-                "version": version,
-                "authorization_event_id": event_id,
-                "revoked_by": self.config.approver,
-                "reason": reason,
-                "admin_uid": uid,
-                "authenticated_identity": admin_identity,
-            }
-        )
+        try:
+            self.audit.append({"stage": "revocation", "spec_id": spec_id, "version": version,
+                               "authorization_event_id": event_id, "revoked_by": admin_identity,
+                               "reason": reason, "admin_uid": uid, "authenticated_identity": admin_identity})
+        except audit_chain.AuditError as error:
+            self._audit_unhealthy = True
+            try:
+                self.audit.mark_incomplete("revocacion aplicada sin evento de auditoria", {"spec_id": spec_id, "authorization_event_id": event_id})
+            except audit_chain.AuditError:
+                pass
+            raise Denied("revocacion aplicada, auditoria incompleta; autoridad bloqueada") from error
         return {"revoked": True, "spec_id": spec_id, "entries": len(entries)}
 
     def _read_revocations(self, spec_id: str) -> list:
@@ -991,7 +1033,6 @@ class Authority:
     def revoke_key(self, uid: int, payload: dict) -> dict:
         self._require_healthy_audit()
         admin_identity = self._admin_identity(uid, payload)
-        admin_identity = self._admin_identity(uid, payload)
         key_id = str(payload.get("key_id") or "")
         reason = str(payload.get("reason") or "").strip()
         if not (key_id and reason):
@@ -1009,21 +1050,43 @@ class Authority:
                 found = True
         if not found:
             raise Denied("clave desconocida")
-        audit_chain.atomic_json_write(self.config.trusted_keys_file, raw, mode=0o600)
+        try:
+            audit_chain.atomic_json_write(self.config.trusted_keys_file, raw, mode=0o600)
+        except OSError as error:
+            raise Denied("no se pudo persistir la revocacion de clave") from error
         # El almacen en memoria se reconstruye para que la revocacion surta efecto ya.
         self.key_store = approval_service.TrustedKeyStore.from_config_file(self.config.trusted_keys_file)
         self.service.key_store = self.key_store
-        self.audit.append({"stage": "key_revoked", "key_id": key_id, "reason": reason, "admin_uid": uid, "authenticated_identity": admin_identity})
+        try:
+            self.audit.append({"stage": "key_revoked", "key_id": key_id, "reason": reason, "admin_uid": uid, "authenticated_identity": admin_identity})
+        except audit_chain.AuditError as error:
+            self._audit_unhealthy = True
+            try:
+                self.audit.mark_incomplete("clave revocada sin evento de auditoria", {"key_id": key_id})
+            except audit_chain.AuditError:
+                pass
+            raise Denied("clave revocada, auditoria incompleta; autoridad bloqueada") from error
         return {"revoked": True, "key_id": key_id}
 
     def _admin_identity(self, uid: int, payload: dict) -> dict:
         if uid not in self.config.admin_uids:
             raise Denied("accion administrativa requiere UID administrador")
-        event = self._approval_event(payload)
-        identity = self.service.provider.authenticate(event) if self.service.provider and event.get("id_token") else None
-        if identity is None or identity.subject != self.config.expected_approver_subject:
+        if self.config.environment == "test" and self.config.allow_simulated_identity:
+            test_identity = payload.get("test_identity")
+            if not isinstance(test_identity, dict) or test_identity.get("confirmed") is not True:
+                raise Denied("identidad administrativa simulada no confirmada")
+            event = {"type": "human_approval", "subject": str(test_identity.get("subject") or ""), "confirmed": True}
+        else:
+            event = self._approval_event(payload)
+        identity = self.service.provider.authenticate(event) if self.service.provider else None
+        if (self.config.environment == "test" and self.config.allow_simulated_identity
+                and identity is not None and not self.config.expected_approver_subject):
+            expected_subject = self.config.approver
+        else:
+            expected_subject = self.config.expected_approver_subject
+        if identity is None or identity.subject != expected_subject:
             raise Denied("reautenticacion OIDC del administrador requerida")
-        return {"issuer": identity.issuer, "subject": identity.subject, "authenticated_at": identity.authenticated_at, "uid": uid}
+        return {"issuer": identity.issuer, "subject": identity.subject, "authenticated_at": identity.authenticated_at, "auth_time": identity.auth_time, "event": "reauthenticated", "uid": uid}
 
     def reconcile(self, uid: int, payload: dict) -> dict:
         admin_identity = self._admin_identity(uid, payload)

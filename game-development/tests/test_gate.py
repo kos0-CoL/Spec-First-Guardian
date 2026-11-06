@@ -116,11 +116,14 @@ class TestImplementationGate(unittest.TestCase):
 
     def test_incomplete_audit_blocks_new_operations(self):
         chain = audit_chain.AuditChain(self.audit)
+        chain.append({"stage": "initialization"})
         chain.mark_incomplete("prueba de bloqueo", {"test": True})
         decision = self.gate().execute(support.operation(self.workspace, content="x"))
         self.assertFalse(decision.allowed)
         self.assertFalse((self.workspace / "src" / "code.py").exists())
-        chain.clear_incomplete("tester", "reconciliado en prueba")
+        chain.block_path.unlink()
+        chain._write_health("HEALTHY")
+        chain._poisoned = False
         allowed = self.gate().execute(support.operation(self.workspace, content="y"))
         self.assertTrue(allowed.allowed, allowed.reasons)
         self.assertTrue((self.workspace / "src" / "code.py").exists())

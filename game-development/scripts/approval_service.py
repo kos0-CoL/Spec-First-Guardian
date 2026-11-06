@@ -120,6 +120,7 @@ def canonical_payload(approval: dict) -> bytes:
             "subject": identity.get("subject"),
             "audience": identity.get("audience"),
             "authenticated_at": identity.get("authenticated_at"),
+            "auth_time": identity.get("auth_time"),
         },
         "approved_at": approval.get("approved_at"),
         "expires_at": approval.get("expires_at"),
@@ -258,7 +259,7 @@ class OIDCIdentityProvider(IdentityProvider):
                 return None
             now = datetime.now(timezone.utc)
             auth_time = claims.get("auth_time")
-            if auth_time is not None and now.timestamp() - int(auth_time) > self.max_auth_age_seconds + self.clock_skew_seconds:
+            if auth_time is None or now.timestamp() - int(auth_time) > self.max_auth_age_seconds + self.clock_skew_seconds:
                 logger.warning("aprobacion denegada: autenticacion demasiado antigua")
                 return None
             # Consumed only after all cryptographic and claim validation succeeds.
@@ -747,8 +748,12 @@ def verify_approval(approval: dict | None, key_store: TrustedKeyStore | None = N
         return False
     authenticated_at = _parse_iso(identity.get("authenticated_at"))
     approved_at = _parse_iso(approval.get("approved_at"))
-    if authenticated_at is None or approved_at is None:
+    auth_time = _parse_iso(identity.get("auth_time"))
+    if authenticated_at is None or approved_at is None or auth_time is None:
         logger.warning("verificacion denegada: fechas de identidad invalidas")
+        return False
+    if auth_time > approved_at + timedelta(minutes=5) or approved_at - auth_time > timedelta(minutes=5):
+        logger.warning("verificacion denegada: autenticacion demasiado antigua o futura")
         return False
     if authenticated_at > approved_at + timedelta(minutes=5):
         logger.warning("verificacion denegada: identidad posterior a la aprobacion")

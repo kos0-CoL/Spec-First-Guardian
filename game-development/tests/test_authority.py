@@ -151,11 +151,20 @@ class AuthorityTestCase(unittest.TestCase):
     def test_challenge_is_single_use(self):
         request = self.request()
         challenge = self.ctx.client.challenge(request["request_id"])
+        offset = 0
+        while offset < challenge["review"]["spec_length"]:
+            page = self.ctx.client.spec_page(request["request_id"], challenge["fingerprint"], offset)
+            offset = page["next_offset"]
+        approval = {"subject": "usuario", "confirmed": True}
+        self.ctx.client.approve(request["request_id"], challenge["challenge"], test_identity=approval,
+                                scope_hash=challenge["scope_hash"], review_fingerprint=challenge["fingerprint"],
+                                review_pages=challenge["review"]["review_pages"], oidc_state=challenge["oidc_state"],
+                                session_id=challenge["session_id"])
         with self.assertRaises(authority_client.AuthorityDenied):
-            self.ctx.client.approve(request["request_id"], challenge["challenge"], test_identity={"subject": "usuario", "confirmed": True}, scope_hash=challenge["scope_hash"], review_fingerprint=challenge["fingerprint"], review_pages=1, oidc_state=challenge["oidc_state"], session_id=challenge["session_id"])
-        with self.assertRaises(authority_client.AuthorityDenied):
-            self.ctx.client.approve(request["request_id"], challenge["challenge"], test_identity={"subject": "usuario", "confirmed": True}, scope_hash=challenge["scope_hash"], review_fingerprint=challenge["fingerprint"], review_pages=1, oidc_state=challenge["oidc_state"], session_id=challenge["session_id"])
-        self.ctx.client.approve(request["request_id"], challenge["challenge"], test_identity={"subject": "usuario", "confirmed": True}, scope_hash=challenge["scope_hash"], review_fingerprint=challenge["fingerprint"], review_pages=1, oidc_state=challenge["oidc_state"], session_id=challenge["session_id"])
+            self.ctx.client.approve(request["request_id"], challenge["challenge"], test_identity=approval,
+                                    scope_hash=challenge["scope_hash"], review_fingerprint=challenge["fingerprint"],
+                                    review_pages=challenge["review"]["review_pages"], oidc_state=challenge["oidc_state"],
+                                    session_id=challenge["session_id"])
         with self.assertRaises(authority_client.AuthorityDenied):
             self.ctx.client.challenge(request["request_id"])
 
@@ -239,6 +248,7 @@ class AuthorityTestCase(unittest.TestCase):
             version="1.0.0",
             authorization_event_id=approval["approval"]["authorization_event_id"],
             reason="prueba de revocacion",
+            test_identity={"subject": "usuario", "confirmed": True},
         )
         decision = self.ctx.client.authorize(self.operation(), content="x")
         self.assertFalse(decision["allowed"])
@@ -259,7 +269,7 @@ class AuthorityTestCase(unittest.TestCase):
         self.ctx.authority.audit.mark_incomplete("prueba", {})
         with self.assertRaises(authority_client.AuthorityDenied):
             self.ctx.client.authorize(self.operation(), content="x")
-        self.ctx.client.reconcile("reconciliado en prueba")
+        self.ctx.client.reconcile("reconciliado en prueba", test_identity={"subject": "usuario", "confirmed": True})
         decision = self.ctx.client.authorize(self.operation(), content="x")
         self.assertTrue(decision["allowed"], decision["reasons"])
 

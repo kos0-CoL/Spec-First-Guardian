@@ -98,6 +98,7 @@ class TestAuditChain(unittest.TestCase):
         self.assertIn("alterado", reason)
 
     def test_incomplete_marker_blocks_and_reconciles(self):
+        self.chain.initialize()
         self.assertFalse(self.chain.is_blocked())
         self.chain.append({"stage": "initialization"})
         self.chain.mark_incomplete("fallo simulado", {"op": "create_file"})
@@ -105,6 +106,15 @@ class TestAuditChain(unittest.TestCase):
         event = self.chain.clear_incomplete("tester", "reconciliado")
         self.assertFalse(self.chain.is_blocked())
         self.assertEqual(event["event"]["stage"], "reconciled")
+
+    def test_missing_initialized_log_is_unavailable(self):
+        self.chain.initialize()
+        self.chain.path.unlink()
+        valid, reason, count = self.chain.verify()
+        self.assertFalse(valid)
+        self.assertEqual(reason, "audit log ausente despues de inicializar")
+        self.assertEqual(count, 0)
+        self.assertTrue(self.chain.is_blocked())
 
     def test_append_to_unwritable_path_raises(self):
         chain = audit_chain.AuditChain(Path("/proc/spec-guardian/audit.jsonl"))
