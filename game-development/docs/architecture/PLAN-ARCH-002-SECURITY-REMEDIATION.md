@@ -2,23 +2,23 @@
 plan_id: PLAN-ARCH-002
 title: "Plan de remediación de hallazgos P1 de Etapa B"
 status: DRAFT
-version: 0.2.1
+version: 0.2.2
 author: "Buffy — borrador para revisión humana"
 created_at: "2026-11-06"
 base_commit: "d8a681c6226f89b123a2802b3aeb02b18f029368"
-supersedes: "0.2.0 (DRAFT)"
+supersedes: "0.2.1 (DRAFT)"
 spec: "SPEC-ARCH-002-SECURITY-REMEDIATION.md"
-spec_sha256: "e0001cab02922e832ba8bf30c139aa28719a78fbee8070f786e8a3e8681b8322"
+spec_sha256: "6aa2b38674c50ff166ba0bd2d7a9e923df38420066f9f4903927b3e88cd5fec5"
 decisions: "DECISIONS-ARCH-002-SECURITY-REMEDIATION.md"
 ---
 
 # PLAN-ARCH-002 — Plan de remediación de hallazgos P1 de Etapa B
 
 **Estado:** DRAFT; no aprobado, no autoriza implementación ni producción.<br>
-**Versión:** 0.2.1; revisión documental que sustituye al borrador 0.2.0.<br>
+**Versión:** 0.2.2; revisión documental que sustituye al borrador 0.2.1.<br>
 **Fecha:** 2026-11-06<br>
 **Autor:** Buffy — propuesta de secuencia para revisión humana.<br>
-**SPEC de referencia:** `SPEC-ARCH-002-SECURITY-REMEDIATION.md`, versión 0.2.1, SHA-256 `e0001cab02922e832ba8bf30c139aa28719a78fbee8070f786e8a3e8681b8322`.<br>
+**SPEC de referencia:** `SPEC-ARCH-002-SECURITY-REMEDIATION.md`, versión 0.2.2, SHA-256 `6aa2b38674c50ff166ba0bd2d7a9e923df38420066f9f4903927b3e88cd5fec5`.<br>
 **Registro de decisiones:** `DECISIONS-ARCH-002-SECURITY-REMEDIATION.md`; todas las decisiones permanecen pendientes.<br>
 **Baseline documental:** `d8a681c6226f89b123a2802b3aeb02b18f029368`; código auditado en `094f93d065cbbedce7d9ff35aeb862db92422476`.<br>
 **Autoridad documental:** este PLAN está subordinado a la SPEC-ARCH-002. No puede agregar requisitos, ampliar alcance, cambiar prioridades ni modificar criterios de aceptación. Si hay discrepancia, la SPEC gobierna y este PLAN debe corregirse.
@@ -61,11 +61,11 @@ Sin G0 no se escribe código. Las tareas de análisis y fixtures pueden preparar
 | D-03 | La política de reemisión, IMP-02 y TST-01. | Las tareas que no emiten ni reemiten desafíos. |
 | D-04 | IMP-05, MIG-02 y el cierre de AUD-04. | IMP-01/IMP-03 y el mínimo de no autorización de grants no correlacionados. |
 | D-05 | IMP-06, IMP-07 y DOC-03. | IMP-03 y las tareas de durabilidad/journal. |
-| D-06 | IMP-01, IMP-03, IMP-04 y MIG-01. | La documentación de límites y la detección conceptual. |
-| D-07 | La política de datos anómalos y el cierre operativo de IMP-04. | La detección, preservación de evidencia y bloqueo fail-closed ya exigidos. |
+| D-06 | IMP-01, IMP-03, IMP-04 básico y MIG-01. | La documentación de límites y la detección conceptual. |
+| D-07 | La política completa de tratamiento de anomalías, la clasificación operativa de estados, el alcance de lectura/diagnóstico y el cierre operativo de IMP-04. | La capacidad básica de IMP-04: journal durable, detección de intenciones huérfanas, bloqueo persistente, preservación de evidencia, inspección de sólo lectura y prohibición de reejecución automática. |
 | D-08 | G0 y la delimitación del alcance de todas las tareas. | Ninguna tarea puede ampliar alcance por su cuenta. |
 
-D-01 puede permanecer pendiente sin impedir G0 ni las tareas P1; sólo impide afirmar que la cobertura heredada es completa. Una tarea no comienza si una decisión de su fila sigue pendiente.
+D-01 puede permanecer pendiente sin impedir G0 ni las tareas P1; sólo impide afirmar que la cobertura heredada es completa. Una tarea no comienza si están pendientes las decisiones que bloquean la capacidad concreta que va a ejecutar. En IMP-04, la capacidad básica puede comenzar con G0, G1, IMP-01, IMP-03 y D-06 resueltos; la capacidad condicionada no comienza sin D-07.
 
 ### 2.2 Compuerta G1 — Baseline reproducible
 
@@ -90,7 +90,8 @@ G0/G1
   └── IMP-01 (fundamento de store/journal/salud, D-06)
         ├── IMP-02 (AUD-01: desafío, D-02/D-03)
         ├── IMP-03 (AUD-03: fsync/durabilidad, D-06)
-        │     └── IMP-04 (AUD-02: gate/recovery, D-06/D-07)
+        │     └── IMP-04 básico (AUD-02: journal/detección/bloqueo/inspección, D-06)
+        │           └── IMP-04 condicionado (política/cierre, además D-07)
         ├── IMP-05 (AUD-04: migración/correlación/fallback, D-04)
         └── IMP-06 (AUD-05: verificación integral, D-05)
               └── IMP-07 (CLI/adaptadores/compatibilidad, D-05)
@@ -100,11 +101,12 @@ G0/G1
 Dependencias obligatorias:
 
 - IMP-02, IMP-03 e IMP-05 comparten el contrato de store/salud de IMP-01; no se implementan antes de que exista una forma durable de registrar el fallo.
-- IMP-04 depende de IMP-03 para distinguir efecto aplicado de durabilidad confirmada.
-- IMP-06 depende de IMP-01 a IMP-05 porque la verificación integral debe comprobar journal, correlación, salud y resultados.
+- IMP-04 básico depende de G0/G1, IMP-01, IMP-03 y D-06 para distinguir efecto aplicado de durabilidad confirmada; no depende de D-07. IMP-04 condicionado depende además de D-07 y del básico.
+- IMP-06 depende de IMP-01, IMP-02, IMP-03, IMP-04 básico e IMP-05 porque la verificación integral debe comprobar journal, correlación, salud y resultados; la política/cierre de IMP-04 (D-07) no es requisito para iniciar la verificación básica, pero sin ella AUD-02 no se declara cerrado.
 - IMP-07 depende de IMP-06 para fijar la semántica del CLI y de los adaptadores.
 - **OBS-04:** IMP-03 no depende de D-05. Su dependencia real es IMP-01 + D-06 (journal/durabilidad). D-05 sólo entra en IMP-06/IMP-07.
 - **OBS-08:** G0 no exige resolver D-01 ni todas las D-xx. D-01 sólo bloquea la declaración de conformidad completa; cada tarea respeta su fila de §2.1.1. Ninguna decisión pendiente autoriza a relajar una restricción global.
+- **OBS-10:** IMP-04 separa la capacidad básica (journal, detección, bloqueo, preservación, inspección y no reejecución), que no depende de D-07, de la capacidad condicionada (política completa, clasificación operativa, alcance de lectura/diagnóstico y cierre), que no se ejecuta sin D-07. La básica sigue exigiendo G0/G1, IMP-01, IMP-03 y D-06.
 - Las pruebas TST-01…TST-09 se escriben junto con cada tarea, pero la validación VAL-01…VAL-06 se ejecuta al final. TST-09 es la prueba documental de AC-017.
 
 ## 4. Tareas de implementación
@@ -114,17 +116,17 @@ Dependencias obligatorias:
 | IMP-01 | Fundamento durable: versión de esquema, journal de operaciones, consulta de huérfanas, CAS de desafío y primitivas de salud. No implementa resolución humana. | G0/G1, D-06 | RF-012, RF-013, RF-016 | `scripts/authority_store.py`, posible módulo de journal, tests de store | Esquema y APIs internas versionadas; migración v1→v2; sin cambiar todavía el flujo de aprobación. |
 | IMP-02 | Invalidación del desafío tras rechazo definitivo de autenticación/firma; CAS y evento durable; política de binding según D-02; reemisión explícita; no aprobación falsa. | IMP-01, D-02/D-03 | RF-012 | `scripts/authority_service.py`, `scripts/authority_store.py`, tests de autoridad | Camino de fallo definitivo sin reutilización; binding según la decisión aprobada; token nuevo sólo por acción admin; concurrencia segura. |
 | IMP-03 | Propagación de errores de fsync de archivo/directorio; estados `NOT_EXECUTED`, `EXECUTED_NOT_DURABLE`, `DURABILITY_CONFIRMED`, `INDETERMINATE`; recibo de durabilidad. | IMP-01, D-06 | RF-014 | `scripts/safe_fs.py`, `scripts/implementation_gate.py`, tests de fs | Ningún `fsync` silenciado; resultado veraz por operación; no depende del contrato CLI de D-05. |
-| IMP-04 | Journal en el gate: intención antes del efecto, resultado después, detección al arrancar, bloqueo persistente, inspección de sólo lectura y preservación de evidencia. No implementa ni simula reconciliación humana. | IMP-01, IMP-03, D-06, D-07 | RF-013, RF-014 | `scripts/implementation_gate.py`, `scripts/authority_service.py`, `scripts/authority_store.py`, tests de gate | Caída entre intención y resultado deja bloqueo persistente; la huérfana no se resuelve, borra ni reejecuta; no se promete reconciliación. |
+| IMP-04 | **Básico:** journal durable en el gate, intención antes del efecto, resultado después, detección al arrancar, bloqueo persistente, preservación de evidencia, inspección de sólo lectura y prohibición de reejecución; no implementa ni simula reconciliación humana. **Condicionado a D-07:** política completa de tratamiento de anomalías, clasificación operativa de estados, alcance de lectura/diagnóstico y cierre operativo. | G0/G1, IMP-01, IMP-03, D-06; D-07 sólo para la parte condicionada | RF-013, RF-014 | `scripts/implementation_gate.py`, `scripts/authority_service.py`, `scripts/authority_store.py`, tests de gate | Básico: caída entre intención y resultado deja bloqueo persistente; la huérfana no se resuelve, borra ni reejecuta. Condicionado: política y cierre operativo sólo con D-07. |
 | IMP-05 | Migración con correlación grant↔evento `approval`; aborto o cuarentena no autorizable según D-04; guard de paridad en `_load_bundle`/fallback; grants históricos no autorizables si no verifican. | IMP-01, D-04 | RF-015 | `scripts/authority_store.py`, `scripts/authority_service.py`, CLI de migración, tests de migración y fallback | Migración válida idempotente; fallo sin cambios parciales; originales intactos; fallback no autoriza grants no correlacionados/cuarentenados. |
-| IMP-06 | Verificación integral del store: cadena, salud, esquema, migración, solicitudes, grants/firmas, correlación, replay, cuarentena y huérfanas; salida separada y fail-closed. | IMP-01…IMP-05, D-05 | RF-016 | `scripts/authority_store.py`, `scripts/authority_service.py`, tests de verificación | `ok`/`valid` veraces; `chain_valid` separado; exit code 0/2; sin mutaciones. |
+| IMP-06 | Verificación integral del store: cadena, salud, esquema, migración, solicitudes, grants/firmas, correlación, replay, cuarentena y huérfanas; salida separada y fail-closed. | IMP-01, IMP-02, IMP-03, IMP-04 básico, IMP-05, D-05 | RF-016 | `scripts/authority_store.py`, `scripts/authority_service.py`, tests de verificación | `ok`/`valid` veraces; `chain_valid` separado; exit code 0/2; sin mutaciones. |
 | IMP-07 | Adaptación del CLI y contratos de adaptadores a la semántica fail-closed y a los nuevos campos; no habilitar OIDC. | IMP-06, D-05 | RF-012…RF-016 | `scripts/authority_service.py`, `scripts/enforce.py`, `scripts/authority_client.py`, docs de contrato | Clientes y operadores reciben estados veraces; compatibilidad documentada. |
 
 ### 4.1 Restricciones de implementación (no son requisitos nuevos)
 
-- IMP-01 puede elegir tabla de journal, eventos enriquecidos o journal separado, pero debe cumplir RF-013 y D-06; no se prescribe aquí la estructura física.
+- IMP-01 se planifica conforme a la alternativa A recomendada de D-06: journal y resultados en el mismo store SQLite. D-06 sigue pendiente; no se adopta un journal separado ni eventos enriquecidos como mecanismo primario sin revisar y aprobar otra alternativa. La estructura física concreta (tablas, índices y migración) no se prescribe aquí; RF-013 y D-06 gobiernan su implementación.
 - IMP-02 no debe confundir “token incorrecto” con “token válido que falló autenticación”; RF-012.4 es obligatorio.
 - IMP-03 no debe revertir automáticamente una operación ya visible; RF-014.7.
-- IMP-04 no debe implementar, inventar ni simular una resolución administrativa de huérfanas. Sólo detecta, preserva, bloquea e inspecciona en modo de sólo lectura; la resolución requiere un mecanismo autorizado que no existe en esta misión. RF-013.11–RF-013.12, AC-013b.
+- IMP-04 básico no depende de D-07: sólo implementa journal, detección, bloqueo persistente, preservación de evidencia, inspección de sólo lectura y prohibición de reejecución. IMP-04 condicionado no se ejecuta sin D-07 e incluye política completa, clasificación operativa, alcance de lectura/diagnóstico y cierre. Ninguna parte implementa, inventa ni simula una resolución administrativa de huérfanas; la resolución requiere un mecanismo autorizado que no existe en esta misión. RF-013.11–RF-013.12, AC-013b.
 - IMP-05 no debe inventar eventos ni aceptar correlación por posición; RF-015.2. Debe probar el fallback tanto con grant ausente en el store como con grant en cuarentena; RF-015.7–RF-015.9.
 - IMP-06 no debe marcar salud ni migrar durante la verificación; RF-016.4.
 
@@ -191,13 +193,14 @@ DOC-01 no debe convertir AUD-06 a AUD-17 en parte del alcance; sólo documenta l
 | F1 | IMP-01 + TST-02/TST-05 parciales: fundamento de store/journal/salud y migración de esquema. | Esquema versionado, APIs, tests de base. | K1 |
 | F2 | IMP-02 + TST-01/TST-06: desafío de un solo uso y carrera. | Camino AUD-01 corregido. | K2 |
 | F3 | IMP-03 + TST-03: fsync y recibos de durabilidad. | Camino AUD-03 corregido. | K3 |
-| F4 | IMP-04 + TST-02/TST-06: journal, detección de huérfanas, bloqueo e inspección. | AUD-02 mitigado; resolución humana pendiente de mecanismo autorizado. | K4 |
+| F4a | IMP-04 básico + TST-02/TST-06: journal, detección de huérfanas, bloqueo persistente, preservación e inspección. | AUD-02 mitigado en la capacidad básica; resolución humana pendiente. | K4a |
+| F4b | IMP-04 condicionado, sólo con D-07: política completa de anomalías, clasificación operativa, alcance de lectura/diagnóstico y cierre. | Cierre operativo de AUD-02 o bloqueo declarado. | K4b |
 | F5 | IMP-05 + MIG-01/MIG-02/TST-04: correlación y migración. | Camino AUD-04 corregido. | K5 |
 | F6 | IMP-06 + TST-05: verificación integral y CLI. | Camino AUD-05 corregido. | K6 |
 | F7 | IMP-07 + DOC-01…DOC-03: compatibilidad, adaptadores y runbook. | Contrato y documentación. | K7 |
 | F8 | VAL-01…VAL-06 + DOC-04: validación final e informe. | Evidencia de cierre o bloqueo. | K8 |
 
-Las fases F2 y F3 pueden ejecutarse en paralelo sólo si comparten el contrato de IMP-01 y no modifican los mismos puntos de estado sin coordinación. F4 no comienza sin F3. F6 no comienza sin F2, F4 y F5.
+Las fases F2 y F3 pueden ejecutarse en paralelo sólo si comparten el contrato de IMP-01 y no modifican los mismos puntos de estado sin coordinación. F4a no comienza sin F3; F4b no comienza sin F4a y D-07. F6 no comienza sin F2, F4a y F5; F4b es necesaria para el cierre operativo de AUD-02, no para iniciar la verificación básica. F8 no declara cierre operativo de AUD-02 sin F4b.
 
 ## 10. Checkpoints y evidencias
 
@@ -211,9 +214,9 @@ Cada checkpoint debe registrar:
 - Fixtures/hashes de bases y archivos legacy.
 - Estados de salud, eventos, recibos de durabilidad y exit codes.
 - Pruebas omitidas, bloqueadas o no concluyentes, con motivo.
-- Decisiones específicas aplicadas y su registro; D-01 puede seguir pendiente si el checkpoint no declara conformidad normativa completa.
+- Decisiones específicas aplicadas y su registro; K4a no requiere D-07 y K4b sí; D-01 puede seguir pendiente si el checkpoint no declara conformidad normativa completa.
 
-Un checkpoint no se cierra por “la suite pasó”; requiere que el criterio específico y su control negativo estén demostrados.
+Un checkpoint no se cierra por “la suite pasó”; requiere que el criterio específico y su control negativo estén demostrados. K4a certifica journal, detección, bloqueo persistente, preservación e inspección de sólo lectura sin D-07. K4b sólo se abre con D-07 y certifica la política completa, la clasificación operativa, el alcance de lectura/diagnóstico y el cierre operativo.
 
 ## 11. Rollback y conservación
 
@@ -240,7 +243,7 @@ Un checkpoint no se cierra por “la suite pasó”; requiere que el criterio es
 
 Este PLAN no se ejecuta hasta que el usuario apruebe explícitamente:
 
-1. `SPEC-ARCH-002-SECURITY-REMEDIATION.md`, versión 0.2.1 y hash `e0001cab02922e832ba8bf30c139aa28719a78fbee8070f786e8a3e8681b8322`;
+1. `SPEC-ARCH-002-SECURITY-REMEDIATION.md`, versión 0.2.2 y hash `6aa2b38674c50ff166ba0bd2d7a9e923df38420066f9f4903927b3e88cd5fec5`;
 2. las decisiones específicas de §2.1.1 aplicables a cada tarea; D-01 puede seguir pendiente si la aprobación de la SPEC es explícitamente condicional;
 3. el alcance estricto de los cinco P1 más el ajuste mínimo anti-bypass del fallback;
 4. la exclusión de OIDC, producción y correcciones P2/P3 no autorizadas, incluida la remediación general de AUD-06.

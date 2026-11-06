@@ -2,11 +2,11 @@
 spec_id: SPEC-ARCH-002
 title: "Remediación de hallazgos P1 de Etapa B"
 status: DRAFT
-version: 0.2.1
+version: 0.2.2
 author: "Buffy — borrador para revisión humana"
 created_at: "2026-11-06"
 base_commit: "d8a681c6226f89b123a2802b3aeb02b18f029368"
-supersedes: "0.2.0 (DRAFT)"
+supersedes: "0.2.1 (DRAFT)"
 parent_spec: "SPEC-ARCH-001-HARDENING.md"
 parent_spec_sha256: "77f3afbb113df0a0a2c6b75755281a8305e85caa3e0cd0e68bc9694dc26c4cda"
 decisions: "DECISIONS-ARCH-002-SECURITY-REMEDIATION.md"
@@ -15,7 +15,7 @@ decisions: "DECISIONS-ARCH-002-SECURITY-REMEDIATION.md"
 # SPEC-ARCH-002 — Remediación de hallazgos P1 de Etapa B
 
 **Estado:** DRAFT; no aprobada, no autoriza implementación ni producción.<br>
-**Versión:** 0.2.1; revisión documental que sustituye al borrador 0.2.0.<br>
+**Versión:** 0.2.2; revisión documental que sustituye al borrador 0.2.1.<br>
 **Fecha:** 2026-11-06<br>
 **Autor:** Buffy — propuesta técnica para revisión humana.<br>
 **Baseline documental:** `d8a681c6226f89b123a2802b3aeb02b18f029368`; el código auditado es el de `094f93d065cbbedce7d9ff35aeb862db92422476`.<br>
@@ -201,7 +201,7 @@ No se introduce un estado documental, de solicitud, de autenticación, de autori
 - **RF-013.7** Dos gates o procesos que intenten registrar la misma operación DEBEN producir como máximo una intención ejecutable y un resultado terminal. Un duplicado DEBE denegarse o resolverse como conflicto; nunca dos efectos no idempotentes.
 - **RF-013.8** Cualquier gate que ejecute operaciones DEBE usar un sink durable que soporte el journal y la consulta de intenciones huérfanas. Si el sink no puede demostrar esa capacidad, DEBE denegar las operaciones en lugar de degradar a `intent`/`result` sin recuperación.
 - **RF-013.9** La API de resultado DEBE distinguir `executed`, `durability` y `audit_complete`; `allowed` por sí solo NO DEBE interpretarse como éxito durable. Un cliente que ignore los campos nuevos no debe recibir una afirmación de éxito no demostrada.
-- **RF-013.10** El journal y SQLite son dominios de persistencia distintos. La SPEC NO afirma atomicidad entre ambos: una operación cuyo efecto externo ocurrió pero cuyo resultado no pudo registrarse durablemente DEBE representarse como `INDETERMINATE`/`RECONCILIATION_REQUIRED`, nunca como éxito. La intención durable se confirma antes del efecto; el resultado se confirma después. Las ventanas entre ambos son parte del contrato, no un detalle oculto (recomendación D-06).
+- **RF-013.10** La formulación de referencia es la alternativa A (recomendada y aún pendiente) de D-06: el journal de operaciones reside en el mismo store SQLite. La intención y el resultado se persisten durablemente en SQLite; el efecto de la operación ocurre en el filesystem. SQLite y filesystem son dominios de persistencia distintos y la SPEC NO afirma atomicidad transaccional entre ellos. Si el efecto ocurre pero el resultado no puede persistirse durablemente, el estado DEBE ser `INDETERMINATE`/`RECONCILIATION_REQUIRED`, nunca éxito. La intención durable se confirma antes del efecto; el resultado se confirma después. No se permite reejecución automática ni declarar éxito en esa ventana.
 - **RF-013.11** La recuperación de una intención huérfana DEBE ser explícita y humana. Ningún proceso, reinicio, tarea de mantenimiento o agente puede resolverla, borrarla, revertirla ni reejecutarla automáticamente. La inspección de sólo lectura puede informar la anomalía, pero no la convierte en autorización.
 - **RF-013.12** Si no existe un mecanismo administrativo autorizado que demuestre identidad humana reautenticada y aporte evidencia de la operación, la resolución permanece bloqueada. No se inventa un mecanismo alternativo ni se acepta una firma del propio agente. **OBS-03/D-07.**
 
@@ -420,7 +420,7 @@ No se introduce un estado documental, de solicitud, de autenticación, de autori
 
 ## 12. Migraciones necesarias
 
-1. **Esquema de store:** la recomendación D-06 es una versión 2 con journal/resultados en el mismo store SQLite y metadatos de correlación/cuarentena. La migración debe ser forward-only, con backup verificado, transacción única, validación de `schema_version` y prueba de rollback operativo que preserve datos. La ubicación final sigue pendiente de D-06.
+1. **Esquema de store:** conforme a OBS-09 y a la alternativa A recomendada de D-06, la versión 2 mantiene el journal y los resultados en el mismo store SQLite, con metadatos de correlación/cuarentena. La migración debe ser forward-only, con backup verificado, transacción única, validación de `schema_version` y prueba de rollback operativo que preserve datos. D-06 sigue `PENDING USER DECISION`; esta SPEC no aprueba la alternativa A y no promete atomicidad SQLite↔filesystem.
 2. **Backfill de evidencia:** no se deben inventar eventos `approval` para grants históricos. Si una intención/resultado histórico no puede correlacionarse, se reporta y se bloquea o se cuarentena según D-04; no se fabrica un resultado.
 3. **Correlación legacy:** la migración existente debe verificar eventos antes de insertar grants y no puede dejar un grant no correlacionado como activo. La elección entre aborto total y cuarentena es D-04; en ambos casos los originales se preservan.
 4. **Salud:** una base migrada con huérfanas o grants no correlacionados debe quedar bloqueada, no `HEALTHY`; la migración no puede limpiar la salud.
@@ -508,7 +508,7 @@ La cobertura de esta tabla es **condicional**: no acredita la aprobación de SPE
 | AUD | RF | AC | Pruebas | Decisión pendiente |
 |---|---|---|---|---|
 | AUD-01 | RF-012 | AC-012a…h | Unitarias, transitorios, binding, carrera, reinicio | D-02, D-03 |
-| AUD-02 | RF-013 | AC-013a…c | Journal, crash, multiproceso, reinicio | D-06, D-07 |
+| AUD-02 | RF-013 | AC-013a…c | Journal, crash, multiproceso, reinicio | D-06; D-07 sólo para política/cierre operativo |
 | AUD-03 | RF-014 | AC-014a…c | Fault injection, cuatro operaciones, reinicio | D-06 (durabilidad/journal) |
 | AUD-04 | RF-015 | AC-015a…e | Migración, firmas, eventos, fallback, originales | D-04 |
 | AUD-05 | RF-016 | AC-016a…d | Matriz de manipulación, CLI, read-only | D-05 |
@@ -518,6 +518,7 @@ La cobertura de esta tabla es **condicional**: no acredita la aprobación de SPE
 - AUD-06 a AUD-17 no se corrigen aquí. En particular, AUD-06 (fallback legacy) queda cubierto sólo por el ajuste mínimo anti-bypass RF-015.7–RF-015.9; su eliminación/rediseño general sigue fuera de alcance. AUD-07 (truncación sin ancla), AUD-08 (migración concurrente), AUD-09 (replay/OIDC) y AUD-15 (docs sobre `INDETERMINATE`) siguen abiertos.
 - **OBS-01** queda recogida en RF-015.7–RF-015.9 y AC-015d; **OBS-02** en RF-012.9–RF-012.10 y AC-012e/f/h; **OBS-03** en RF-013.11–RF-013.12 y §10.3; **OBS-04** en TST-09/AC-017 y en la corrección de dependencia IMP-03 del PLAN.
 - **OBS-05** queda recogida en la Nota de autoridad, §4.2, §15.1 y §18; **OBS-06** en RF-012.2/2a, AC-012g y §17; **OBS-07** en §3.1, RF-013.5, §10.1/§10.3 y AC-013b; **OBS-08** en las compuertas y dependencias del PLAN.
+- **OBS-09** queda recogida en RF-013.10 y §12.1: journal y resultados en SQLite según la alternativa A recomendada de D-06, efecto en filesystem y ausencia de atomicidad transaccional. **OBS-10** queda recogida en §15.2 y en la separación de IMP-04 del PLAN.
 - SA-014 no se declara cumplido por esta SPEC; sólo se definen las pruebas que la corrección debe aportar.
 - La aprobación de SPEC-ARCH-001 no se infiere de este documento. **D-01.**
 
@@ -546,8 +547,8 @@ La cobertura de esta tabla es **condicional**: no acredita la aprobación de SPE
 | D-03 | Reemisión del desafío | (a) misma solicitud con desafío nuevo; (b) nueva solicitud obligatoria; (c) ambas con condiciones (recomendada: (a) por defecto, (b) si cambia alcance/expira). | UX, estado y auditoría. | RF-012.6. |
 | D-04 | Grants históricos no correlacionados | (a) rechazar toda la migración; (b) cuarentenar y bloquear; (c) re-aprobación; (d) aceptar como legacy (no recomendada). | Disponibilidad histórica vs. trazabilidad. | RF-015/migración. |
 | D-05 | Contrato de verificación y compatibilidad | (a) `valid=ok`, campos separados (recomendada); (b) `valid` de cadena + `ok` (no recomendada); (c) nueva versión de protocolo. | Consumidores CLI/adaptadores. | RF-016/AC-016. |
-| D-06 | Journal y recuperación | (a) journal en el store SQLite; (b) journal separado; (c) eventos de auditoría enriquecidos. | Esquema, migración y recuperación; no hay atomicidad SQLite/filesystem. | RF-013. |
-| D-07 | Datos existentes con anomalías | (a) bloquear autorizaciones y permitir sólo lectura/diagnóstico (recomendada); (b) bloqueo total; (c) cuarentena por registro. | Disponibilidad y recuperación. | Implementación. |
+| D-06 | Journal y recuperación | (a) journal en el store SQLite; (b) journal separado; (c) eventos de auditoría enriquecidos. | Esquema, migración y recuperación; la alternativa A es recomendación no aprobada; no hay atomicidad SQLite/filesystem. | RF-013/RF-014. |
+| D-07 | Datos existentes con anomalías | (a) bloquear autorizaciones y permitir sólo lectura/diagnóstico (recomendada); (b) bloqueo total; (c) cuarentena por registro. | Disponibilidad y recuperación. | Política/cierre operativo de IMP-04; no la capacidad básica. |
 | D-08 | Alcance de P2/P3 | (a) P1 + ajuste mínimo anti-bypass (recomendada); (b) incluir AUD-06/AUD-15; (c) otro. | Evita ampliar la misión silenciosamente. | Plan final. |
 
 Ninguna opción está aprobada. El análisis completo, alternativas, consecuencias y recomendaciones está en `DECISIONS-ARCH-002-SECURITY-REMEDIATION.md`; todas las decisiones permanecen `PENDING USER DECISION`.

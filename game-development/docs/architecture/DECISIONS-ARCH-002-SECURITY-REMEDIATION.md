@@ -2,23 +2,23 @@
 document_id: DECISIONS-ARCH-002
 title: "Registro de decisiones de la remediación P1 de Etapa B"
 status: DRAFT
-version: 0.1.1
+version: 0.1.2
 author: "Buffy — borrador para revisión humana"
 created_at: "2026-11-06"
 base_commit: "d8a681c6226f89b123a2802b3aeb02b18f029368"
 spec: "SPEC-ARCH-002-SECURITY-REMEDIATION.md"
-spec_version: "0.2.1"
-spec_sha256: "e0001cab02922e832ba8bf30c139aa28719a78fbee8070f786e8a3e8681b8322"
+spec_version: "0.2.2"
+spec_sha256: "6aa2b38674c50ff166ba0bd2d7a9e923df38420066f9f4903927b3e88cd5fec5"
 plan: "PLAN-ARCH-002-SECURITY-REMEDIATION.md"
 ---
 
 # DECISIONS-ARCH-002 — Decisiones pendientes de la remediación P1
 
 **Estado:** DRAFT; no aprobado, no autoriza implementación ni producción.<br>
-**Versión:** 0.1.1; revisión documental que sustituye al borrador 0.1.0.<br>
+**Versión:** 0.1.2; revisión documental que sustituye al borrador 0.1.1.<br>
 **Fecha:** 2026-11-06<br>
 **Autor:** Buffy — análisis para revisión humana.<br>
-**SPEC de referencia:** `SPEC-ARCH-002-SECURITY-REMEDIATION.md`, versión 0.2.1, SHA-256 `e0001cab02922e832ba8bf30c139aa28719a78fbee8070f786e8a3e8681b8322`.<br>
+**SPEC de referencia:** `SPEC-ARCH-002-SECURITY-REMEDIATION.md`, versión 0.2.2, SHA-256 `6aa2b38674c50ff166ba0bd2d7a9e923df38420066f9f4903927b3e88cd5fec5`.<br>
 **Baseline documental:** `d8a681c6226f89b123a2802b3aeb02b18f029368`; código auditado `094f93d065cbbedce7d9ff35aeb862db92422476`.<br>
 **Autoridad:** sólo el usuario puede aprobar una decisión. Este documento no cambia estados, no implementa, no firma y no convierte una recomendación en norma.
 
@@ -37,8 +37,8 @@ plan: "PLAN-ARCH-002-SECURITY-REMEDIATION.md"
 | D-03 | Reemisión del desafío | PENDING USER DECISION | Misma solicitud por defecto; nueva si cambia alcance/expira | RF-012.6 |
 | D-04 | Grants históricos y fallback | PENDING USER DECISION | Cuarentena + bloqueo + re-aprobación; paridad de fallback | RF-015/MIG |
 | D-05 | Contrato de verificación | PENDING USER DECISION | `valid=ok`; `chain_valid` separado; exit 0/2 | RF-016/AC-016 |
-| D-06 | Journal y atomicidad | PENDING USER DECISION | Journal en SQLite; sin afirmar atomicidad con filesystem | RF-013 |
-| D-07 | Datos existentes anómalos | PENDING USER DECISION | Bloqueo de autorización; lectura/diagnóstico seguro | Implementación |
+| D-06 | Journal y atomicidad | PENDING USER DECISION | Journal en SQLite (alternativa A recomendada, no aprobada); sin atomicidad transaccional con filesystem | RF-013/RF-014 |
+| D-07 | Datos existentes anómalos | PENDING USER DECISION | Bloqueo de autorización; lectura/diagnóstico seguro | Política/cierre de IMP-04; no la capacidad básica |
 | D-08 | Alcance | PENDING USER DECISION | AUD-01…AUD-05 + anti-bypass mínimo | Plan final |
 
 ## 1. D-01 — Autoridad formal de SPEC-ARCH-001
@@ -218,6 +218,8 @@ plan: "PLAN-ARCH-002-SECURITY-REMEDIATION.md"
 
 **Problema.** AUD-02 demuestra que `intent` y `result` se escriben en transacciones separadas y que una caída deja un efecto sin resultado durable. La corrección necesita un journal recuperable. No existe atomicidad entre SQLite y el filesystem.
 
+**Aclaración OBS-09.** La alternativa A recomendada ubica el journal y los resultados en el mismo store SQLite y el efecto en el filesystem. RF-013.10 se alinea con ese modelo; D-06 sigue pendiente y la recomendación no se declara aprobada.
+
 **Alternativas.**
 
 - **A. Journal en el mismo store SQLite** (recomendada): tablas de intención/resultado, transacción local, consulta de huérfanas y salud en el mismo lugar. No elimina la ventana con el filesystem.
@@ -248,11 +250,13 @@ plan: "PLAN-ARCH-002-SECURITY-REMEDIATION.md"
 
 **Decisión requerida.** El usuario debe aprobar la ubicación del journal, el esquema v2 y el tratamiento de la ventana indeterminada.
 
-**RF/AC afectados.** RF-013.1–RF-013.12; RF-014 (durabilidad); AC-013a–AC-013c; IMP-01/IMP-04; MIG-01.
+**RF/AC afectados.** RF-013.1–RF-013.12; RF-014 (durabilidad); AC-013a–AC-013c; IMP-01/IMP-03/IMP-04 básico; MIG-01.
 
 ## 7. D-07 — Datos existentes con anomalías
 
 **Problema.** El store puede contener operaciones huérfanas, grants no correlacionados, registros incompletos, cadenas inválidas, migraciones interrumpidas o salud inconsistente. No está definido qué puede hacer el servicio en cada contexto sin convertir la inspección en autorización.
+
+**Separación OBS-10.** La capacidad básica de IMP-04 —journal durable, detección de huérfanas, bloqueo persistente, preservación de evidencia, inspección de sólo lectura y prohibición de reejecución— no depende de esta decisión. La política completa, la clasificación operativa, el alcance de lectura/diagnóstico y el cierre operativo sí dependen de D-07.
 
 **Matriz de comportamiento recomendada.**
 
@@ -277,7 +281,7 @@ plan: "PLAN-ARCH-002-SECURITY-REMEDIATION.md"
 
 **Decisión requerida.** El usuario debe aprobar la matriz, el alcance de la lectura permitida y el bloqueo global frente al bloqueo por grant.
 
-**RF/AC afectados.** RF-013.4–RF-013.5; RF-015.5; RF-016.4; AC-013a/AC-013b; AC-015c; §10.
+**RF/AC afectados.** RF-013.4–RF-013.5; RF-015.5; RF-016.4; AC-013a/AC-013b; AC-015c; IMP-04 condicionado; §10.
 
 ## 8. D-08 — Alcance de la misión
 
@@ -367,7 +371,7 @@ plan: "PLAN-ARCH-002-SECURITY-REMEDIATION.md"
 
 **Estado:** RESUELTO DOCUMENTALMENTE; implementación no autorizada.
 
-**Corrección.** IMP-04 sólo implementa journal, detección, bloqueo persistente, inspección de sólo lectura y preservación de evidencia. DOC-02 documenta esos límites y la condición futura para una resolución autorizada, no una capacidad existente. AC-013b demuestra que sin mecanismo la huérfana permanece bloqueada y no se simula reconciliación.
+**Corrección.** IMP-04 básico implementa journal, detección, bloqueo persistente, inspección de sólo lectura y preservación de evidencia. La política completa y el cierre operativo quedan condicionados a D-07 (OBS-10). DOC-02 documenta esos límites y la condición futura para una resolución autorizada, no una capacidad existente. AC-013b demuestra que sin mecanismo la huérfana permanece bloqueada y no se simula reconciliación.
 
 **Límite.** AUD-02 no se declara completamente cerrado mientras falte esa capacidad administrativa.
 
@@ -379,6 +383,26 @@ plan: "PLAN-ARCH-002-SECURITY-REMEDIATION.md"
 
 **Límite.** Las compuertas descritas no se ejecutan ni se declaran cumplidas en esta revisión documental.
 
+### OBS-09 — Dominios de persistencia y D-06
+
+**Estado:** RESUELTO DOCUMENTALMENTE; no aprueba D-06.
+
+**Hallazgo.** RF-013.10 afirmaba que el journal y SQLite eran dominios de persistencia distintos, lo que contradecía la alternativa A de D-06, que ubica el journal en el mismo store SQLite.
+
+**Corrección.** RF-013.10 se alinea con la alternativa A recomendada y aún pendiente de D-06: el journal y los resultados se persisten durablemente en SQLite; el efecto ocurre en el filesystem. SQLite y filesystem son los dominios distintos; no hay atomicidad transaccional entre ellos. Si el efecto ocurre pero el resultado no se persiste, el estado es `INDETERMINATE`/`RECONCILIATION_REQUIRED`, sin reejecución automática ni éxito. Se revisaron §12.1, §15.2, §15.3 de la SPEC y el PLAN.
+
+**Límite.** D-06 sigue `PENDING USER DECISION`; la alternativa A no está aprobada y esta corrección no modifica la decisión.
+
+### OBS-10 — Dependencia de D-07 en IMP-04
+
+**Estado:** RESUELTO DOCUMENTALMENTE; implementación no autorizada.
+
+**Hallazgo.** El PLAN declaraba que D-07 no bloqueaba detección, preservación y bloqueo, pero la tabla de IMP-04 listaba D-07 como dependencia de toda la tarea.
+
+**Corrección.** IMP-04 separa la capacidad básica —journal durable, detección de huérfanas, bloqueo persistente, preservación de evidencia, inspección de sólo lectura y prohibición de reejecución— de la capacidad condicionada —política completa, clasificación operativa, alcance de lectura/diagnóstico y cierre—. La básica depende de G0, G1, IMP-01, IMP-03 y D-06; la condicionada requiere además D-07. Se actualizaron §2.1.1, §3, §4, §4.1, §9, §10 y §13 del PLAN.
+
+**Límite.** D-07 sigue `PENDING USER DECISION`; la parte condicionada no puede ejecutarse ni cerrarse sin ella. La básica no se adelanta a G0/G1, IMP-01, IMP-03 ni D-06.
+
 ## 10. Matriz de decisiones y trazabilidad
 
 | Decisión | RF | AC | Tarea del PLAN | Estado |
@@ -388,8 +412,8 @@ plan: "PLAN-ARCH-002-SECURITY-REMEDIATION.md"
 | D-03 | RF-012.6 | AC-012b | IMP-02/TST-01 | PENDING |
 | D-04 | RF-015 | AC-015a–e | IMP-05/MIG-02/TST-04 | PENDING |
 | D-05 | RF-016 | AC-016a–d | IMP-06/IMP-07/TST-05 | PENDING |
-| D-06 | RF-013/RF-014 | AC-013a–c/AC-014a–c | IMP-01/IMP-04/MIG-01 | PENDING |
-| D-07 | RF-013/RF-015 | AC-013/AC-015c | IMP-04/MIG-02 | PENDING |
+| D-06 | RF-013/RF-014 | AC-013a–c/AC-014a–c | IMP-01/IMP-03/IMP-04 básico/MIG-01 | PENDING |
+| D-07 | RF-013/RF-015 | AC-013/AC-015c | IMP-04 condicionado/MIG-02 | PENDING |
 | D-08 | RF-015.7–.9 | AC-015d | IMP-05/TST-04 | PENDING |
 
 ## 11. Riesgos residuales del registro
@@ -402,6 +426,8 @@ plan: "PLAN-ARCH-002-SECURITY-REMEDIATION.md"
 6. **D-02:** la política estricta puede facilitar denegación de servicio si un tercero posee el token; es el coste de impedir replay. La clasificación de binding/revisión sigue pendiente.
 7. **OBS-07:** sin mecanismo administrativo autorizado, la resolución de huérfanas no está disponible; el bloqueo puede ser permanente y no se simula una salida.
 8. **OBS-08:** las compuertas y la matriz de decisiones son documentales; no se declaran verificadas ni ejecutadas hasta la implementación autorizada.
+9. **OBS-09:** la ubicación del journal en SQLite es la alternativa A recomendada de D-06, aún pendiente; RF-013.10 no debe interpretarse como aprobación de D-06 ni como atomicidad SQLite↔filesystem.
+10. **OBS-10:** la parte básica de IMP-04 puede ejecutarse con G0/G1, IMP-01, IMP-03 y D-06 sin D-07; la política completa y el cierre operativo permanecen bloqueados hasta D-07.
 
 ## 12. Condición de cierre documental
 
