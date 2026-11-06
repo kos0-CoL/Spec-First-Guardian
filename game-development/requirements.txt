@@ -1,0 +1,4 @@
+cryptography>=42
+jsonschema>=4.19
+PyYAML>=6
+PyJWT>=2.8

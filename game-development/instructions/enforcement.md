@@ -1,55 +1,61 @@
 # Contrato de Enforcement — SPEC-001
 
-Interfaz desacoplada para el control técnico de operaciones de escritura.
+Interfaz obligatoria para el control técnico de operaciones de escritura.
 
-## Responsabilidades
+## Cadena de control
 
-1. Verificación de autorización: comprobar identificación, evento y vigencia.
-2. Comprobación de alcance: asegurar que la operación está dentro de la versión aprobada.
-3. Comprobación de permisos: evaluar la cadena de delegación y herramientas permitidas.
-4. Interceptación de operaciones: detener antes de ejecutar escrituras protegidas.
-5. Registro de intentos bloqueados: dejar evidencia del rechazo.
-6. Propagación de restricciones a subagentes: heredar el bloqueo por toda la cadena.
+```
+AGENTE
+  → IMPLEMENTATION GATE        (implementation_gate.py)
+  → MOTOR DE AUTORIZACIÓN      (validate.authorize_operation)
+  → SERVICIO DE APROBACIÓN    (approval_service.verify_approval)
+  → REGISTRO DE REVOCACIONES  (revocation_registry)
+  → VALIDACIÓN DE ALCANCE Y RUTA
+  → ESCRITURA EJECUTADA
+```
 
-## Interfaz propuesta
+El gate **ejecuta** la operación autorizada; no se limita a devolver una decisión.
 
-Entrada: operación (tipo, recursos, alcance solicitado) + contexto (spec_id, version, usuario, evento de autorización).
+## Operaciones controladas
 
-Salida: permitido / denegado + motivo + referencia de la autorización.
+`create_file`, `modify_file`, `overwrite_file`, `delete_file`.
 
-## Adaptadores
+Controles aplicados:
 
-- Orquestador principal.
-- Agente de línea de comandos.
-- Subagente.
-- Herramienta alternativa de escritura.
+1. Contexto completo obligatorio: `agent`, `project`, `spec_id`, `version`,
+   `requirement`, `task`, `operation_type`, `path`, `workspace_root`.
+2. Firma Ed25519 verificada contra el almacén de confianza.
+3. Identidad humana autenticada ligada al sujeto de la clave.
+4. Revocaciones comprobadas en registro firmado y protegido.
+5. Proyecto, versión, requisito, tarea y operación dentro de las listas autorizadas.
+6. Ruta relativa, sin traversal, sin rutas absolutas, sin symlinks, dentro del workspace.
+7. Hash SHA-256 de la SPEC igual al firmado.
+8. Escritura atómica y audit log obligatorio (si no se puede auditar, se deniega).
 
-Cada adaptador implementa la interfaz sin conocer el detalle del validador.
+## Operaciones NO protegidas por el gate
+
+- Escrituras directas del agente con acceso al sistema de archivos.
+- Ejecución de scripts o procesos externos.
+- Instalación de dependencias y migraciones.
+- Cambios de configuración fuera del gate.
+- Operaciones de subagentes con su propio acceso al filesystem.
+
+Estas vías requieren aislamiento del sistema operativo (usuario sin permisos de
+escritura, contenedor, montaje de solo lectura o servicio intermediario). El gate
+por sí solo no las bloquea y no se declara protección universal.
 
 ## Denegación por defecto
 
-Si falla la verificación de autorización, la escritura debe rechazarse.
-
-No se asume permiso por errores del sistema, pérdida de conexión, información
-incompleta, estado desconocido o versión de SPEC desconocida.
-
-## Separación de responsabilidades
-
-1. Skill documental.
-2. Validador de especificaciones.
-3. Contrato de autorización.
-4. Adaptador de integración.
-5. Enforcement efectivo.
-
-## Implementacion actual
-
-El modulo `scripts/enforce.py` expone la evaluacion:
-
-```bash
-python scripts/enforce.py <operacion> <ruta-a-spec.md> --task-id TASK-001 --approval <registro.json>
-```
+Sin contexto completo, sin autorización verificable, con revocaciones no
+comprobadas o con cualquier error de lectura: denegar.
 
 ## Registro
 
-Todo intento denegado debe quedar registrado con tarea, agente, motivo, estado de
-la SPEC y acción intentada.
+Cada decisión (permitida o denegada) se escribe en el audit log con hora,
+contexto de operación y motivo. Si el registro falla, la operación se deniega.
+
+## Adaptadores
+
+Orquestador, CLI y subagentes deben invocar `enforce.py apply` (o
+`ImplementationGate.execute`) y no escribir directamente. Un adaptador que
+escriba por su cuenta queda fuera del control y debe declararse como tal.

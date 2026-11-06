@@ -87,6 +87,13 @@ approved_at: "2026-11-05"
 
 - Tareas: documentación, validador, enforcement, pruebas.
 
+## Trazabilidad
+
+- RF-001 → TASK-001 (bloqueo de implementación sin aprobación humana).
+- SA-01 … SA-12 → pruebas de validación, autorización y enforcement.
+- TASK-001 → operaciones `create_file`, `modify_file`, `overwrite_file`, `delete_file` a través del Implementation Gate.
+- Decisión de aprobación → registro externo firmado (identidad, huella, alcance, vigencia, revocaciones).
+
 ## Aprobación
 
 - Versión presentada: 1.0.0

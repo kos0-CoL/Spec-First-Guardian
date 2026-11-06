@@ -63,9 +63,35 @@ Cada etapa está detallada en `instructions/workflow.md`.
 - `examples/` — Ejemplos de especificaciones.
 - `assets/` — Esquemas (`schemas/`) y diagramas (`diagrams/`).
 
+## Autoridad de aprobación
+
+Una única autoridad: `scripts/approval_service.py` (Ed25519 + identidad humana +
+almacén de confianza externo). No existe firma HMAC, clave por defecto ni
+aprobación generada por el agente. La firma solo la produce el backend protegido
+de la autoridad; la verificación solo acepta claves del almacén configurado por el
+supervisor. Sin esa configuración, la implementación se deniega.
+
+La aprobación vive en un registro externo firmado: identidad autenticada, huella
+del contenido, alcance, vigencia y revocaciones. El documento nunca es fuente de
+confianza de la aprobación.
+
 ## Comandos
 
 ```bash
-python scripts/validate.py <ruta-a-spec.md>
-python scripts/generate_report.py <ruta-a-spec.md>
+python scripts/validate.py <ruta-a-spec.md> [--approval <registro.json>] [--json]
+python scripts/generate_report.py <ruta-a-spec.md> [--approval <registro.json>]
+python scripts/enforce.py evaluate --context operacion.json
+python scripts/enforce.py apply    --context operacion.json
 ```
+
+El agente debe solicitar cada escritura al Implementation Gate con contexto
+completo (proyecto, agente, SPEC, versión, requisito, tarea, operación, ruta y
+workspace). Sin contexto completo la operación se deniega.
+
+## Enforcement real
+
+El gate ejecuta `create_file`, `modify_file`, `overwrite_file` y `delete_file`
+tras verificar firma, identidad, revocaciones, alcance, ruta y hash de la SPEC.
+Las escrituras directas del agente, procesos externos, dependencias y migraciones
+fuera del gate **no** están protegidas: requieren aislamiento del sistema
+operativo. Ver `instructions/enforcement.md`.

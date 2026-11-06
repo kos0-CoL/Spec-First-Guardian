@@ -86,12 +86,21 @@ created_at: "YYYY-MM-DD"
 - Tareas: [tareas].
 - Orden: [orden].
 - Componentes afectados: [componentes].
-- Trazabilidad: [requisito → tarea].
+
+## Trazabilidad
+
+- Requisito → tarea: [RF-001 → TASK-001].
+- Tarea → operación autorizada: [operación].
+- Criterio de aceptación → prueba: [SA-01 → prueba].
 
 ## Aprobación
 
-- Estado de la especific: [DRAFT | UNDER_REVIEW | PENDING_USER_APPROVAL | APPROVED | REJECTED | SUPERSEDED | ARCHIVED]
-- Registro de aprobación: [gestionado externamente por el registro de aprobaciones verificables; no contenido del documento]
+- Registro de aprobación: gestionado exclusivamente por el registro externo firmado (fuera del documento).
+- Versión presentada para aprobación: [X.Y.Z].
+
+> La aprobación no se escribe en este documento. El registro externo contiene la
+> identidad autenticada, la huella del contenido, el alcance, la vigencia y la
+> firma de la autoridad de confianza.
 
 > No todos los apartados requieren contenido extenso. Cuando alguno no
 > aplique, debe indicarse expresamente y justificarse. No se permite omitirlo

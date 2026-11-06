@@ -1,35 +1,34 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "Spec-First Guardian",
+  "title": "Spec-First Guardian — metadatos de especificación",
+  "description": "Metadatos documentales de una SPEC. La aprobación NO forma parte de este esquema: vive en el registro externo firmado y nunca se toma del documento.",
   "type": "object",
   "required": ["spec_id", "status", "version", "author", "created_at"],
+  "additionalProperties": true,
   "properties": {
     "spec_id": {
       "type": "string",
       "pattern": "^SPEC-[0-9]+$"
     },
     "title": {
-      "type": "string"
+      "type": "string",
+      "minLength": 1
     },
     "status": {
       "type": "string",
       "enum": ["DRAFT", "UNDER_REVIEW", "PENDING_USER_APPROVAL", "APPROVED", "REJECTED", "SUPERSEDED", "ARCHIVED"]
     },
     "version": {
-      "type": "string"
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
     },
     "author": {
-      "type": "string"
+      "type": "string",
+      "minLength": 1
     },
     "created_at": {
       "type": "string",
       "format": "date"
-    },
-    "approver": {
-      "type": ["string", "null"]
-    },
-    "approved_at": {
-      "type": ["string", "null"]
     }
   }
 }
