@@ -37,14 +37,27 @@ def canonical_payload(approval: dict) -> bytes:
     return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
-def sign_approval(approval: dict, private_key_pem: bytes | None = None, key_id: str | None = None, human_authenticated: bool = False) -> dict | None:
-    """Firma una aprobacion humana autenticada.
+class HumanApprovalService:
+    """Servicio de aprobacion humana.
 
-    Sin un evento de aprobacion humana autenticado no se genera firma: la firma
-    solo puede producirse despues de esa autenticacion.
+    Exige un evento de aprobacion autenticado (por un proveedor de identidad
+    confiable) antes de permitir la firma. Sin proveedor configurado no se
+    autentica nada y las firmas quedan denegadas.
     """
-    if not human_authenticated or private_key_pem is None or not key_id:
-        return None
+
+    def __init__(self, provider=None) -> None:
+        self.provider = provider
+
+    def authenticate(self, approval_event: dict | None) -> bool:
+        return bool(self.provider and self.provider.authenticate(approval_event or {}))
+
+    def sign(self, approval: dict, private_key_pem: bytes, key_id: str, approval_event: dict) -> dict | None:
+        if not self.authenticate(approval_event):
+            return None
+        return _sign_approval(approval, private_key_pem, key_id)
+
+
+def _sign_approval(approval: dict, private_key_pem: bytes, key_id: str) -> dict:
     private_key = serialization.load_pem_private_key(private_key_pem, password=None)
     signed_approval = dict(approval)
     signed_approval["key_id"] = key_id
@@ -64,6 +77,20 @@ def sign_approval(approval: dict, private_key_pem: bytes | None = None, key_id: 
     return record
 
 
+def sign_approval(approval: dict, private_key_pem: bytes | None = None, key_id: str | None = None, approval_event: dict | None = None, approval_service: HumanApprovalService | None = None) -> dict | None:
+    """Firma una aprobacion humana autenticada (evento verificado).
+
+    La firma solo se produce si el servicio de aprobacion valida el evento.
+    No existe mecanismo de autorizacion propio del agente.
+    """
+    service = approval_service if approval_service is not None else HumanApprovalService()
+    if not service.authenticate(approval_event):
+        return None
+    if private_key_pem is None or not key_id:
+        return None
+    return _sign_approval(approval, private_key_pem, key_id)
+
+
 class TrustedKeyStore:
     """Almacen de claves confiables para la verificacion de firmas Ed25519.
 
@@ -72,16 +99,17 @@ class TrustedKeyStore:
     extrae del registro de aprobacion bajo verificacion.
     """
 
-    def __init__(self, trusted_keys: dict | None = None) -> None:
+    def __init__(self, trusted_keys: dict | None = None, admin_authenticated: bool = False) -> None:
         self._trusted_keys: dict[str, bytes] = {}
-        if trusted_keys:
+        self.admin_authenticated = bool(admin_authenticated)
+        if trusted_keys and admin_authenticated:
             for key_id, public_key_pem in trusted_keys.items():
                 if public_key_pem and self.register(str(key_id), public_key_pem):
                     self._trusted_keys[str(key_id)] = public_key_pem
 
-    def register(self, key_id: str, public_key_pem: bytes) -> bool:
+    def register(self, key_id: str, public_key_pem: bytes, admin_authenticated: bool = False) -> bool:
         key = str(key_id or "")
-        if not key or not public_key_pem:
+        if not key or not public_key_pem or not admin_authenticated:
             return False
         try:
             serialization.load_pem_public_key(public_key_pem)
@@ -102,15 +130,25 @@ class TrustedKeyStore:
 
 DEFAULT_KEY_ID = "KEY-2026-11-05-001"
 DEFAULT_KEY_STORE = TrustedKeyStore()
+_DEFAULT_KEY_STORE_OVERRIDE: TrustedKeyStore | None = None
+
+
+def configure_default_key_store(store: TrustedKeyStore) -> None:
+    """Configura la tienda de confianza desde el supervisor protegido."""
+    global _DEFAULT_KEY_STORE_OVERRIDE
+    _DEFAULT_KEY_STORE_OVERRIDE = store
 
 
 def get_default_key_store() -> TrustedKeyStore:
-    """Devuelve la tienda de claves confiables, inicializandola desde el entorno."""
+    """Devuelve la tienda de confianza, priorizando la configuracion protegida."""
+    global _DEFAULT_KEY_STORE_OVERRIDE
+    if _DEFAULT_KEY_STORE_OVERRIDE is not None:
+        return _DEFAULT_KEY_STORE_OVERRIDE
     store = DEFAULT_KEY_STORE
     pem = os.environ.get("SPEC_GUARDIAN_ED25519_PUBLIC_KEY")
     key_id = os.environ.get("SPEC_GUARDIAN_ED25519_KEY_ID") or DEFAULT_KEY_ID
     if pem and not store.resolve(key_id):
-        store.register(key_id, pem.encode("utf-8"))
+        store.register(key_id, pem.encode("utf-8"), admin_authenticated=True)
     return store
 
 

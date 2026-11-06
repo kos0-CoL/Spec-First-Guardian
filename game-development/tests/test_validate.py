@@ -112,14 +112,34 @@ def ed25519_signed_approval(fingerprint: str, key_id: str = "KEY-TEST-001", **ov
         format=serialization.PrivateFormat.PKCS8,
         encryption_algorithm=serialization.NoEncryption(),
     )
-    signed = approval_service.sign_approval(approval, private_key_pem, key_id=key_id, human_authenticated=True)
+    approval_event = {"type": "human_approval", "user_id": "usuario", "approval_id": "EVENT-2026-11-05-001"}
+    human_service = approval_service.HumanApprovalService(provider=SimulatedHumanProvider())
+    signed = approval_service.sign_approval(
+        approval,
+        private_key_pem,
+        key_id=key_id,
+        approval_event=approval_event,
+        approval_service=human_service,
+    )
     public_key_pem = private_key.public_key().public_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PublicFormat.SubjectPublicKeyInfo,
     )
-    key_store = approval_service.TrustedKeyStore()
-    key_store.register(key_id, public_key_pem)
+    key_store = approval_service.TrustedKeyStore(admin_authenticated=True)
+    key_store.register(key_id, public_key_pem, admin_authenticated=True)
     return signed, key_store
+
+
+class SimulatedHumanProvider:
+    def __init__(self, user_id: str = "usuario") -> None:
+        self.user_id = user_id
+
+    def authenticate(self, approval_event) -> bool:
+        return bool(
+            isinstance(approval_event, dict)
+            and approval_event.get("type") == "human_approval"
+            and str(approval_event.get("user_id") or "") == self.user_id
+        )
 
 
 class TestSpecValidator(unittest.TestCase):
@@ -299,7 +319,7 @@ class TestSpecValidator(unittest.TestCase):
         decision = enforce.evaluate_write("create_auth", Path("."), task_id="TASK-001", operation_context=operation)
         self.assertFalse(decision["allowed"])
 
-    def test_signing_without_human_authentication_is_denied(self):
+    def test_signing_without_authenticated_human_event_is_denied(self):
         approval = {
             "spec_id": "SPEC-001",
             "version": "1.0.0",
@@ -317,7 +337,7 @@ class TestSpecValidator(unittest.TestCase):
             format=serialization.PrivateFormat.PKCS8,
             encryption_algorithm=serialization.NoEncryption(),
         )
-        self.assertIsNone(approval_service.sign_approval(approval, private_key_pem, key_id="KEY-TEST-002"))
+        self.assertIsNone(approval_service.sign_approval(approval, private_key_pem, key_id="KEY-TEST-002", approval_event={"type": "agent_self_service"}))
 
     def test_enforce_operation_context_blocks_path_traversal(self):
         fingerprint = hashlib.sha256(APPROVED_SPEC.encode("utf-8")).hexdigest()
@@ -334,6 +354,35 @@ class TestSpecValidator(unittest.TestCase):
         }
         decision = enforce.evaluate_write("create_code", Path("."), task_id="TASK-001", operation_context=operation)
         self.assertFalse(decision["allowed"])
+
+    def test_enforce_without_operation_context_is_denied(self):
+        decision = enforce.evaluate_write("create_code", Path("."), task_id="TASK-001")
+        self.assertFalse(decision["allowed"])
+
+    def test_authorize_operation_rejects_modified_spec_hash(self):
+        path = write_temp(APPROVED_SPEC)
+        try:
+            fingerprint = hashlib.sha256(APPROVED_SPEC.encode("utf-8")).hexdigest()
+            approval, key_store = ed25519_signed_approval(fingerprint)
+            operation = {
+                "agent": "agente-1",
+                "project": "Spec-First-Guardian",
+                "spec_id": "SPEC-001",
+                "version": "1.0.0",
+                "requirement": "RF-001",
+                "task": "TASK-001",
+                "operation_type": "create_code",
+                "path": "src/code.py",
+            }
+            modified_spec = APPROVED_SPEC.replace("Problema: test.", "Problema: test modificado.")
+            modified_path = write_temp(modified_spec)
+            try:
+                self.assertTrue(spec_validator.authorize_operation(approval, operation, key_store=key_store, spec_path=path))
+                self.assertFalse(spec_validator.authorize_operation(approval, operation, key_store=key_store, spec_path=modified_path))
+            finally:
+                modified_path.unlink()
+        finally:
+            path.unlink()
 
 
 if __name__ == "__main__":

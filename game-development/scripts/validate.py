@@ -293,7 +293,7 @@ def validate_spec(path: Path, approval: dict | None = None, key_store=None, now:
 REQUIRED_OPERATION_FIELDS = ("agent", "project", "spec_id", "version", "requirement", "task", "operation_type", "path")
 
 
-def authorize_operation(approval: dict | None, operation: dict, key_store=None) -> bool:
+def authorize_operation(approval: dict | None, operation: dict, key_store=None, spec_path: Path | None = None) -> bool:
     """Comprueba si una operacion esta dentro del alcance de una autorizacion (SPEC-001).
 
     Toda operacion debe declarar agent, project, spec_id, version, requirement,
@@ -320,6 +320,13 @@ def authorize_operation(approval: dict | None, operation: dict, key_store=None) 
         return False
     if revocation_blocks(spec_id, str(approval.get("authorization_event_id") or "")):
         return False
+    if spec_path is not None and spec_path.exists():
+        try:
+            current_text = spec_path.read_text(encoding="utf-8")
+        except Exception:
+            return False
+        if hashlib.sha256(current_text.encode("utf-8")).hexdigest() != str(approval.get("fingerprint") or ""):
+            return False
     scope = str(approval.get("scope") or "")
     operations = [str(o) for o in (approval.get("operations") or [])]
     paths = [str(p) for p in (approval.get("authorized_paths") or [])]

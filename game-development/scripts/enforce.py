@@ -19,8 +19,17 @@ def evaluate_write(operation: str, spec_path: Path, task_id: str = "TASK-001", a
     approval = validate.load_approval(approval_path) if approval_path else None
     allowed = False
     reason = "IMPLEMENTACION BLOQUEADA: PENDIENTE DE APROBACION HUMANA."
+    if operation_context is None:
+        return {
+            "allowed": False,
+            "operation": operation,
+            "task_id": task_id,
+            "spec_id": None,
+            "version": None,
+            "reason": "IMPLEMENTACION BLOQUEADA: OPERACION SIN CONTEXTO DE AUTORIZACION.",
+        }
     if operation_context is not None:
-        allowed = bool(validate.authorize_operation(approval, operation_context, key_store=approval_service.get_default_key_store()))
+        allowed = bool(validate.authorize_operation(approval, operation_context, key_store=approval_service.get_default_key_store(), spec_path=spec_path))
         spec_id = str(operation_context.get("spec_id") or "")
         version = str(operation_context.get("version") or "")
         if allowed and str(operation_context.get("path") or ""):
