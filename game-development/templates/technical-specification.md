@@ -5,8 +5,6 @@ status: DRAFT
 version: 0.1.0
 author: "[nombre]"
 created_at: "YYYY-MM-DD"
-approver: null
-approved_at: null
 ---
 
 # SPEC-001 — [Título]
@@ -92,9 +90,8 @@ approved_at: null
 
 ## Aprobación
 
-- Versión presentada: [X.Y.Z]
-- Estado: [APPROVED]
-- Registro de aprobación: [ID, versión, aprobador, fecha]
+- Estado de la especific: [DRAFT | UNDER_REVIEW | PENDING_USER_APPROVAL | APPROVED | REJECTED | SUPERSEDED | ARCHIVED]
+- Registro de aprobación: [gestionado externamente por el registro de aprobaciones verificables; no contenido del documento]
 
 > No todos los apartados requieren contenido extenso. Cuando alguno no
 > aplique, debe indicarse expresamente y justificarse. No se permite omitirlo

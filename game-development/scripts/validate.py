@@ -148,19 +148,57 @@ def validate_metadata_with_schema(frontmatter: dict) -> list:
     return errors
 
 
-def load_revocations(spec_id: str) -> list:
+def load_revocations(spec_id: str) -> list | None:
+    """Carga el registro de revocaciones.
+
+    Devuelve la lista de revocaciones cuando el registro es valido, una lista vacia
+    cuando no existe revocaciones aplicables, o None cuando el registro esta
+    ausente, corrupto, inaccesible o invalido. Ante cualquier error se debe denegar
+    nuevas operaciones de implementacion.
+    """
     path = Path(__file__).resolve().parent.parent / "specs" / "revocations" / f"{spec_id}.json"
     if not path.exists():
         return []
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return []
-    entries = data.get("revocations") if isinstance(data, dict) else None
-    return entries if isinstance(entries, list) else []
+        return None
+    if not isinstance(data, dict) or str(data.get("spec_id") or "") != str(spec_id or ""):
+        return None
+    entries = data.get("revocations")
+    if not isinstance(entries, list):
+        return None
+    for entry in entries:
+        if not isinstance(entry, dict):
+            return None
+        if not str(entry.get("authorization_event_id") or "") or not isinstance(entry.get("revoked"), bool):
+            return None
+    return entries
 
 
-def validate_spec(path: Path, approval: dict | None = None, public_key_pem: bytes | None = None) -> dict:
+def revocation_blocks(spec_id: str, authorization_event_id: str) -> bool:
+    """Indica si una autorizacion fue revocada. Ante error de registro deniega."""
+    entries = load_revocations(spec_id) if spec_id else None
+    if entries is None:
+        return True
+    for entry in entries:
+        if str(entry.get("authorization_event_id") or "") == str(authorization_event_id or "") and entry.get("revoked") is True:
+            return True
+    return False
+
+
+def is_safe_path(base_dir: Path, relative_path: str) -> bool:
+    """Valida que una ruta de escritura este dentro del workspace y sin traversal."""
+    try:
+        base = base_dir.resolve()
+        candidate = (base / str(relative_path or "")).resolve()
+        candidate.relative_to(base)
+        return True
+    except Exception:
+        return False
+
+
+def validate_spec(path: Path, approval: dict | None = None, key_store=None, now: object = None) -> dict:
     errors: list = []
     warnings: list = []
 
@@ -195,30 +233,28 @@ def validate_spec(path: Path, approval: dict | None = None, public_key_pem: byte
     if status == "APPROVED":
         if not version:
             errors.append("La SPEC esta aprobada pero no registra version.")
-        if not approver:
-            errors.append("La SPEC esta aprobada pero no registra el aprobador.")
-        if not approved_at:
+        approval_approver = str((approval or {}).get("approver") or approver or "")
+        approval_approved_at = str((approval or {}).get("approved_at") or approved_at or "")
+        if not approval_approver:
+            errors.append("La SPEC esta aprobada pero la autorizacion no registra un aprobador verificable.")
+        if not approval_approved_at:
             warnings.append("La aprobacion no registra fecha.")
 
     document_valid = len(errors) == 0
     requirements_valid = document_valid and acceptance_criteria_count(body) > 0
 
     fingerprint = hashlib.sha256(text.encode("utf-8")).hexdigest()
-    approval_verified = bool(approval and approval_service.verify_approval(approval, public_key_pem=public_key_pem))
-    revoked = False
-    if approval is not None and str(spec_id or ""):
-        for entry in load_revocations(str(spec_id)):
-            if isinstance(entry, dict) and entry.get("authorization_event_id") == approval.get("authorization_event_id") and bool(entry.get("revoked")):
-                revoked = True
-                break
+    approval_verified = bool(approval and approval_service.verify_approval(approval, key_store=key_store, now=now))
+    revoked = bool(approval is not None and revocation_blocks(str(spec_id or ""), str(approval.get("authorization_event_id") or "")))
+    approval_version = str((approval or {}).get("version") or version or "")
     approval_valid = bool(
         status == "APPROVED"
         and approval_verified
         and not revoked
         and not bool(approval.get("revoked", False))
-        and bool(version)
-        and bool(approver)
-        and bool(approved_at)
+        and bool(approval_version)
+        and bool(approval_approver)
+        and bool(approval_approved_at)
         and approval.get("fingerprint") == fingerprint
         and approval.get("spec_id") == spec_id
         and approval.get("version") == version
@@ -254,38 +290,52 @@ def validate_spec(path: Path, approval: dict | None = None, public_key_pem: byte
     return result
 
 
-def authorize_operation(approval: dict | None, operation: dict, public_key_pem: bytes | None = None) -> bool:
-    """Comprueba si una operacion esta dentro del alcance de una autorizacion (SPEC-001)."""
+REQUIRED_OPERATION_FIELDS = ("agent", "project", "spec_id", "version", "requirement", "task", "operation_type", "path")
+
+
+def authorize_operation(approval: dict | None, operation: dict, key_store=None) -> bool:
+    """Comprueba si una operacion esta dentro del alcance de una autorizacion (SPEC-001).
+
+    Toda operacion debe declarar agent, project, spec_id, version, requirement,
+    task, operation_type y path. Los campos ausentes se rechazan sin completarse
+    con valores de la autorizacion.
+    """
+    if not isinstance(operation, dict):
+        return False
+    if any(not str(operation.get(field) or "").strip() for field in REQUIRED_OPERATION_FIELDS):
+        return False
+    if not isinstance(approval, dict):
+        return False
     if not approval:
         return False
-    if not approval_service.verify_approval(approval, public_key_pem=public_key_pem):
+    if not approval_service.verify_approval(approval, key_store=key_store):
         return False
     spec_id = str(operation.get("spec_id") or "")
     version = str(operation.get("version") or "")
     approval_spec_id = str(approval.get("spec_id") or "")
     approval_version = str(approval.get("version") or "")
     approval_project = str(approval.get("project") or "")
-    operation_project = str(operation.get("project") or approval_project or "")
-    if operation_project != approval_project or spec_id != approval_spec_id or version != approval_version:
+    operation_project = str(operation.get("project") or "")
+    if not operation_project or operation_project != approval_project or spec_id != approval_spec_id or version != approval_version:
         return False
-    revoked = False
-    for entry in load_revocations(spec_id) if spec_id else []:
-        if isinstance(entry, dict) and entry.get("authorization_event_id") == approval.get("authorization_event_id") and bool(entry.get("revoked")):
-            revoked = True
-            break
-    if revoked or bool(approval.get("revoked", False)):
+    if revocation_blocks(spec_id, str(approval.get("authorization_event_id") or "")):
         return False
-    scope = str(approval.get("scope") or "ALCANCE_TOTAL")
+    scope = str(approval.get("scope") or "")
+    operations = [str(o) for o in (approval.get("operations") or [])]
+    paths = [str(p) for p in (approval.get("authorized_paths") or [])]
     if scope and scope != "ALCANCE_TOTAL":
-        if str(operation.get("operation_type") or "") not in [str(o) for o in (approval.get("operations") or [])]:
+        if str(operation.get("operation_type") or "") not in operations:
             return False
-        paths = [str(p) for p in (approval.get("authorized_paths") or [])]
-        path = str(operation.get("path") or operation.get("resource") or "")
-        if paths and path and not any(path == p or path.startswith(p.rstrip("/") + "/") for p in paths):
+        path = str(operation.get("path") or "")
+        if not path or not any(path == p or path.startswith(p.rstrip("/") + "/") for p in paths):
             return False
     tasks = [str(t) for t in (approval.get("tasks") or [])]
-    task_id = str(operation.get("task_id") or "")
-    if task_id and tasks and task_id not in tasks:
+    task_id = str(operation.get("task") or operation.get("task_id") or "")
+    if tasks and task_id not in tasks:
+        return False
+    requirements = [str(r) for r in (approval.get("requirements") or [])]
+    requirement = str(operation.get("requirement") or "")
+    if requirements and requirement not in requirements:
         return False
     return True
 
@@ -302,11 +352,8 @@ def main(argv=None) -> int:
         return 2
 
     approval = load_approval(args.approval) if args.approval else None
-    public_key_pem = None
-    env_public_key = os.environ.get("SPEC_GUARDIAN_ED25519_PUBLIC_KEY")
-    if env_public_key:
-        public_key_pem = env_public_key.encode("utf-8")
-    result = validate_spec(args.spec, approval=approval, public_key_pem=public_key_pem)
+    key_store = approval_service.get_default_key_store()
+    result = validate_spec(args.spec, approval=approval, key_store=key_store)
 
     if args.json:
         payload = {

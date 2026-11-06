@@ -8,6 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 import validate as spec_validator
+import enforce
 import approval_service
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -111,12 +112,14 @@ def ed25519_signed_approval(fingerprint: str, key_id: str = "KEY-TEST-001", **ov
         format=serialization.PrivateFormat.PKCS8,
         encryption_algorithm=serialization.NoEncryption(),
     )
-    signed = approval_service.sign_approval(approval, private_key_pem, key_id=key_id)
+    signed = approval_service.sign_approval(approval, private_key_pem, key_id=key_id, human_authenticated=True)
     public_key_pem = private_key.public_key().public_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PublicFormat.SubjectPublicKeyInfo,
     )
-    return signed, public_key_pem
+    key_store = approval_service.TrustedKeyStore()
+    key_store.register(key_id, public_key_pem)
+    return signed, key_store
 
 
 class TestSpecValidator(unittest.TestCase):
@@ -140,8 +143,8 @@ class TestSpecValidator(unittest.TestCase):
         path = write_temp(APPROVED_SPEC)
         try:
             fingerprint = hashlib.sha256(APPROVED_SPEC.encode("utf-8")).hexdigest()
-            approval, public_key_pem = ed25519_signed_approval(fingerprint)
-            result = spec_validator.validate_spec(path, approval=approval, public_key_pem=public_key_pem)
+            approval, key_store = ed25519_signed_approval(fingerprint)
+            result = spec_validator.validate_spec(path, approval=approval, key_store=key_store)
             self.assertTrue(result["document_valid"])
             self.assertTrue(result["requirements_valid"])
             self.assertTrue(result["approval_valid"])
@@ -161,9 +164,9 @@ class TestSpecValidator(unittest.TestCase):
         path = write_temp(APPROVED_SPEC)
         try:
             fingerprint = hashlib.sha256(APPROVED_SPEC.encode("utf-8")).hexdigest()
-            approval, public_key_pem = ed25519_signed_approval(fingerprint)
+            approval, key_store = ed25519_signed_approval(fingerprint)
             approval["fingerprint"] = "0" * 64
-            result = spec_validator.validate_spec(path, approval=approval, public_key_pem=public_key_pem)
+            result = spec_validator.validate_spec(path, approval=approval, key_store=key_store)
             self.assertFalse(result["approval_valid"])
             self.assertFalse(result["implementation_allowed"])
         finally:
@@ -173,9 +176,9 @@ class TestSpecValidator(unittest.TestCase):
         path = write_temp(APPROVED_SPEC)
         try:
             fingerprint = hashlib.sha256(APPROVED_SPEC.encode("utf-8")).hexdigest()
-            approval, public_key_pem = ed25519_signed_approval(fingerprint)
+            approval, key_store = ed25519_signed_approval(fingerprint)
             approval["revoked"] = True
-            result = spec_validator.validate_spec(path, approval=approval, public_key_pem=public_key_pem)
+            result = spec_validator.validate_spec(path, approval=approval, key_store=key_store)
             self.assertFalse(result["approval_valid"])
             self.assertFalse(result["implementation_allowed"])
         finally:
@@ -214,8 +217,8 @@ class TestSpecValidator(unittest.TestCase):
         path = write_temp(APPROVED_SPEC)
         try:
             fingerprint = hashlib.sha256(APPROVED_SPEC.encode("utf-8")).hexdigest()
-            approval, public_key_pem = ed25519_signed_approval(fingerprint, expires_at="2020-01-01T00:00:00Z")
-            result = spec_validator.validate_spec(path, approval=approval, public_key_pem=public_key_pem)
+            approval, key_store = ed25519_signed_approval(fingerprint, expires_at="2020-01-01T00:00:00Z")
+            result = spec_validator.validate_spec(path, approval=approval, key_store=key_store)
             self.assertFalse(result["approval_valid"])
             self.assertFalse(result["implementation_allowed"])
         finally:
@@ -225,52 +228,112 @@ class TestSpecValidator(unittest.TestCase):
         path = write_temp(APPROVED_SPEC)
         try:
             fingerprint = hashlib.sha256(APPROVED_SPEC.encode("utf-8")).hexdigest()
-            approval, public_key_pem = ed25519_signed_approval(fingerprint)
-            approval["public_key"] = public_key_pem.decode("ascii")
+            approval, key_store = ed25519_signed_approval(fingerprint)
+            # La clave generada por el agente no esta registrada en la tienda confiable.
+            untrusted_store = approval_service.TrustedKeyStore()
+            approval["public_key"] = key_store.resolve("KEY-TEST-001").decode("ascii")
             approval["verified"] = True
-            other_key = Ed25519PrivateKey.generate()
-            other_pub = other_key.public_key().public_bytes(encoding=serialization.Encoding.PEM, format=serialization.PublicFormat.SubjectPublicKeyInfo)
-            result = spec_validator.validate_spec(path, approval=approval, public_key_pem=other_pub)
+            result = spec_validator.validate_spec(path, approval=approval, key_store=untrusted_store)
+            self.assertFalse(result["approval_verified"])
             self.assertFalse(result["implementation_allowed"])
         finally:
             path.unlink()
 
     def test_authorize_operation_rejects_unauthorized_scope(self):
         fingerprint = hashlib.sha256(APPROVED_SPEC.encode("utf-8")).hexdigest()
-        approval, public_key_pem = ed25519_signed_approval(fingerprint, scope="INVENTARIO", operations=["create_inventory"], authorized_paths=["src/inventory"])
+        approval, key_store = ed25519_signed_approval(fingerprint, scope="INVENTARIO", operations=["create_inventory"], authorized_paths=["src/inventory"])
         operation_in_scope = {
+            "agent": "agente-1",
             "project": "Spec-First-Guardian",
             "spec_id": "SPEC-001",
             "version": "1.0.0",
+            "requirement": "RF-001",
+            "task": "TASK-001",
             "operation_type": "create_inventory",
-            "task_id": "TASK-001",
             "path": "src/inventory",
         }
         operation_out_scope = {
+            "agent": "agente-1",
             "project": "Spec-First-Guardian",
             "spec_id": "SPEC-001",
             "version": "1.0.0",
+            "requirement": "RF-001",
+            "task": "TASK-001",
             "operation_type": "create_auth",
-            "task_id": "TASK-001",
             "path": "src/auth",
         }
-        self.assertTrue(spec_validator.authorize_operation(approval, operation_in_scope, public_key_pem=public_key_pem))
-        self.assertFalse(spec_validator.authorize_operation(approval, operation_out_scope, public_key_pem=public_key_pem))
+        self.assertTrue(spec_validator.authorize_operation(approval, operation_in_scope, key_store=key_store))
+        self.assertFalse(spec_validator.authorize_operation(approval, operation_out_scope, key_store=key_store))
 
     def test_authorize_operation_requires_matching_version_and_project(self):
         fingerprint = hashlib.sha256(APPROVED_SPEC.encode("utf-8")).hexdigest()
-        approval, public_key_pem = ed25519_signed_approval(fingerprint)
+        approval, key_store = ed25519_signed_approval(fingerprint)
         operation = {
+            "agent": "agente-1",
             "project": "Spec-First-Guardian",
             "spec_id": "SPEC-001",
             "version": "1.0.0",
+            "requirement": "RF-001",
+            "task": "TASK-001",
             "operation_type": "create_code",
-            "task_id": "TASK-001",
             "path": "src/code.py",
         }
-        self.assertTrue(spec_validator.authorize_operation(approval, operation, public_key_pem=public_key_pem))
-        self.assertFalse(spec_validator.authorize_operation(approval, dict(operation, version="0.9.0"), public_key_pem=public_key_pem))
-        self.assertFalse(spec_validator.authorize_operation(approval, dict(operation, project="Otro-Repo"), public_key_pem=public_key_pem))
+        self.assertTrue(spec_validator.authorize_operation(approval, operation, key_store=key_store))
+        self.assertFalse(spec_validator.authorize_operation(approval, dict(operation, version="0.9.0"), key_store=key_store))
+        self.assertFalse(spec_validator.authorize_operation(approval, dict(operation, project="Otro-Repo"), key_store=key_store))
+        self.assertFalse(spec_validator.authorize_operation(approval, {k: v for k, v in operation.items() if k != "requirement"}, key_store=key_store))
+
+    def test_enforce_operation_context_blocks_unauthorized_operation(self):
+        fingerprint = hashlib.sha256(APPROVED_SPEC.encode("utf-8")).hexdigest()
+        approval, key_store = ed25519_signed_approval(fingerprint, scope="INVENTARIO", operations=["create_inventory"], authorized_paths=["src/inventory"])
+        operation = {
+            "agent": "agente-1",
+            "project": "Spec-First-Guardian",
+            "spec_id": "SPEC-001",
+            "version": "1.0.0",
+            "requirement": "RF-001",
+            "task": "TASK-001",
+            "operation_type": "create_auth",
+            "path": "src/auth",
+        }
+        decision = enforce.evaluate_write("create_auth", Path("."), task_id="TASK-001", operation_context=operation)
+        self.assertFalse(decision["allowed"])
+
+    def test_signing_without_human_authentication_is_denied(self):
+        approval = {
+            "spec_id": "SPEC-001",
+            "version": "1.0.0",
+            "approver": "usuario",
+            "approved_at": "2026-11-05",
+            "fingerprint": "0" * 64,
+            "scope": "ALCANCE_TOTAL",
+            "authorization_event_id": "EVENT-2026-11-05-001",
+            "verified": True,
+            "revoked": False,
+        }
+        private_key = Ed25519PrivateKey.generate()
+        private_key_pem = private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+        self.assertIsNone(approval_service.sign_approval(approval, private_key_pem, key_id="KEY-TEST-002"))
+
+    def test_enforce_operation_context_blocks_path_traversal(self):
+        fingerprint = hashlib.sha256(APPROVED_SPEC.encode("utf-8")).hexdigest()
+        approval, key_store = ed25519_signed_approval(fingerprint)
+        operation = {
+            "agent": "agente-1",
+            "project": "Spec-First-Guardian",
+            "spec_id": "SPEC-001",
+            "version": "1.0.0",
+            "requirement": "RF-001",
+            "task": "TASK-001",
+            "operation_type": "create_code",
+            "path": "../../etc/cron.d/evil",
+        }
+        decision = enforce.evaluate_write("create_code", Path("."), task_id="TASK-001", operation_context=operation)
+        self.assertFalse(decision["allowed"])
 
 
 if __name__ == "__main__":

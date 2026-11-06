@@ -12,20 +12,20 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import validate
+import approval_service
 
 
 def evaluate_write(operation: str, spec_path: Path, task_id: str = "TASK-001", approval_path: Path | None = None, operation_context: dict | None = None) -> dict:
     approval = validate.load_approval(approval_path) if approval_path else None
-    public_key_pem = None
-    env_public_key = os.environ.get("SPEC_GUARDIAN_ED25519_PUBLIC_KEY")
-    if env_public_key:
-        public_key_pem = env_public_key.encode("utf-8")
     allowed = False
     reason = "IMPLEMENTACION BLOQUEADA: PENDIENTE DE APROBACION HUMANA."
     if operation_context is not None:
-        allowed = bool(validate.authorize_operation(approval, operation_context, public_key_pem=public_key_pem))
+        allowed = bool(validate.authorize_operation(approval, operation_context, key_store=approval_service.get_default_key_store()))
         spec_id = str(operation_context.get("spec_id") or "")
         version = str(operation_context.get("version") or "")
+        if allowed and str(operation_context.get("path") or ""):
+            if not validate.is_safe_path(Path(str(operation_context.get("workspace_root") or ".")), str(operation_context.get("path") or "")):
+                allowed = False
         if allowed:
             return {
                 "allowed": True,
@@ -44,7 +44,7 @@ def evaluate_write(operation: str, spec_path: Path, task_id: str = "TASK-001", a
             "version": version,
             "reason": reason,
         }
-    result = validate.validate_spec(spec_path, approval=approval, public_key_pem=public_key_pem)
+    result = validate.validate_spec(spec_path, approval=approval, key_store=approval_service.get_default_key_store())
     allowed = bool(result.get("implementation_allowed"))
     if allowed:
         return {
