@@ -8,7 +8,8 @@
 | Almacén de confianza | no accesible | archivo 0600, carga validada |
 | Registro de revocaciones | no escribible | directorio 0700 del servicio |
 | Configuración de seguridad | no accesible | `/etc/spec-guardian`, root:servicio, 0640 |
-| Socket de la autoridad | conecta (grupo agentes) | lo crea y autentica por `SO_PEERCRED` |
+| Configuración de cliente | solo lectura (clave pública) | `/etc/spec-guardian/client.json`, root:root, 0644 |
+| Socket de la autoridad | conecta (grupo agentes) | lo crea y autentica por `SO_PEERCRED` y atestación firmada |
 | Workspace | solo lectura | escritura por el gate |
 | Auditoría | no escribible | `audit.jsonl` del servicio |
 
@@ -29,6 +30,12 @@ no al grupo del servicio.
 | Inyectar un proveedor de identidad falso | el proveedor simulado solo existe con `environment=test`; en producción se exige OIDC |
 | Leer la clave privada desde el agente | la clave vive en un proceso y UID distintos; el agente no tiene ruta a ella |
 | Cambiar variables de entorno para alterar la confianza | la autoridad no lee configuración de confianza del entorno del agente |
+| Redirigir el cliente con `SPEC_GUARDIAN_AUTHORITY_SOCKET`/`_UID` | el cliente ignora el entorno: solo carga `/etc/spec-guardian/client.json` |
+| Sustituir el socket por uno falso | falla la atestación: el proceso falso no tiene la clave privada de la autoridad |
+| Sustituir el socket por un enlace o cambiar sus permisos | se rechaza antes de conectar (tipo, propietario, GID y modo) |
+| Servidor con otro UID | `SO_PEERCRED` no coincide y la conexión se deniega |
+| Credenciales del par no disponibles | denegación; nunca se acepta identidad desconocida |
+| Configuración de cliente escribible por el agente | se rechaza por propietario, modo o enlace simbólico |
 | Importar una solicitud alterada | integridad SHA-256 por solicitud; se rechaza antes del desafío |
 | Reutilizar un desafío | se consume antes de firmar y caduca |
 | Reutilizar un token para otra aprobación | el desafío está ligado a solicitud, huella y alcance |
@@ -61,7 +68,7 @@ sudo ./scripts/install_authority.sh --project-root /srv/proyecto \
 
 # 2. Configurar OIDC real en /etc/spec-guardian/authority.json
 
-# 3. Arrancar y comprobar
+# 3. Arrancar y comprobar (el instalador escribe client.json para los agentes)
 sudo systemctl enable --now spec-guardian-authority
 python scripts/workspace_guard.py verify /srv/proyecto \
   --service-uid "$(id -u spec-guardian)" --agent-uid 1001

@@ -70,9 +70,12 @@ que corre con otro UID y habla por un socket Unix. Es el único proceso que tien
 la clave privada Ed25519, el almacén de claves de confianza, el registro de
 revocaciones y la capacidad de escribir en el workspace.
 
-El agente no importa claves ni firma: solicita. La autoridad verifica el UID del
-par con `SO_PEERCRED`, exige identidad humana OIDC, emite un desafío de un solo
-uso ligado a la solicitud, la huella y el alcance, y solo entonces firma.
+El agente no importa claves ni firma: solicita. El cliente toma socket y UID de
+`/etc/spec-guardian/client.json` (instalado por root, no modificable por el
+agente), verifica el UID del par con `SO_PEERCRED` y exige una atestación firmada
+con la clave pública pinnada antes de enviar nada. La autoridad exige identidad
+humana OIDC, emite un desafío de un solo uso ligado a la solicitud, la huella y
+el alcance, y solo entonces firma.
 
 No existe HMAC, clave por defecto, aprobación del agente ni registro de claves
 por el agente. Sin autoridad disponible o sin firma verificable, se deniega.
@@ -80,8 +83,6 @@ por el agente. Sin autoridad disponible o sin firma verificable, se deniega.
 ## Comandos
 
 ```bash
-export SPEC_GUARDIAN_AUTHORITY_SOCKET=/run/spec-guardian/authority.sock
-
 python scripts/validate.py <ruta-a-spec.md> [--approval <registro.json>] [--json]
 python scripts/generate_report.py <ruta-a-spec.md> [--approval <registro.json>]
 

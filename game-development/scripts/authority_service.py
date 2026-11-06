@@ -32,6 +32,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import secrets
 import signal
 import socket
@@ -53,10 +54,13 @@ import revocation_registry
 import safe_fs
 import validate
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 MAX_MESSAGE_BYTES = 4 * 1024 * 1024
 MAX_CONTENT_BYTES = 1024 * 1024
 SOCKET_TIMEOUT = 10.0
+ATTESTATION_PREFIX = "SPEC-GUARDIAN-AUTHORITY-ATTESTATION-V1"
+ATTESTATION_TTL_SECONDS = 300
+NONCE_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 CLIENT_OPERATIONS = ("status", "request_approval", "authorize", "evaluate", "verify_approval")
 ADMIN_OPERATIONS = ("pending", "challenge", "approve", "revoke", "revoke_key", "reconcile", "audit_verify", "status")
 
@@ -79,6 +83,11 @@ def _iso(moment: datetime) -> str:
 
 def _canonical(value) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+
+
+def attestation_statement(nonce: str, service_uid: int, pid: int) -> bytes:
+    """Declaracion firmada que acredita la identidad del servicio."""
+    return f"{ATTESTATION_PREFIX}\n{nonce}\n{int(service_uid)}\n{int(pid)}".encode("utf-8")
 
 
 def _sha256(value) -> str:
@@ -272,6 +281,8 @@ def _owner_and_mode_problems(path: Path, uid: int, *, allow_root: bool = True, r
     mode = stat.S_IMODE(info.st_mode)
     if reject_world and mode & 0o007:
         problems.append(f"permisos abiertos a otros usuarios: {path}")
+    if stat.S_ISDIR(info.st_mode) and mode & 0o020:
+        problems.append(f"directorio escribible por el grupo: {path}")
     if stat.S_ISREG(info.st_mode) and mode & 0o077:
         problems.append(f"archivo legible por grupo u otros: {path}")
     return problems
@@ -296,6 +307,8 @@ def preflight(config: AuthorityConfig) -> list:
             problems.append("produccion requiere issuer, audience y jwks_url de OIDC")
         if config.signing_key_file is None:
             problems.append("produccion requiere clave de firma")
+        if config.socket_group_gid is None:
+            problems.append("produccion requiere socket_group_gid (grupo de agentes)")
     for path in (config.trusted_keys_file, config.revocations_dir, config.state_dir, config.socket_path.parent, config.audit_log.parent):
         problems.extend(_owner_and_mode_problems(path, uid))
     if config.signing_key_file is not None:
@@ -343,6 +356,7 @@ class Authority:
             environment=config.environment,
         )
         self.audit = audit_chain.AuditChain(config.audit_log)
+        self._attestation_nonces: dict = {}
         self._requests_dir = config.state_dir / "requests"
         self._approvals_dir = config.state_dir / "approvals"
         self._requests_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -368,6 +382,46 @@ class Authority:
             "audit_block_reason": self.audit.block_reason() if self.audit.is_blocked() else None,
             "audit_chain": {"valid": valid, "reason": reason, "events": count},
             "clients": [{"uid": grant.uid, "agents": list(grant.agents)} for grant in self.config.clients.values()],
+        }
+
+    def attest(self, uid: int, payload: dict) -> dict:
+        """Prueba de identidad del servicio para el cliente.
+
+        La firma se hace con la misma clave Ed25519 de la autoridad sobre una
+        declaracion con dominio propio (no es una aprobacion) que liga el nonce
+        del cliente, el UID y el PID del servicio. Un socket falso puede imitar
+        la forma de la respuesta, pero no producir la firma.
+        """
+        if self.config.grant(uid) is None and not self.config.is_admin(uid):
+            raise Denied("UID no autorizado para atestacion")
+        nonce = str(payload.get("nonce") or "")
+        if not NONCE_PATTERN.match(nonce):
+            raise Denied("nonce de atestacion invalido")
+        if self.signer is None or not self.signer.available:
+            raise Denied("firma no disponible para atestacion")
+        now = time.monotonic()
+        with self.lock:
+            expired = [key for key, seen in self._attestation_nonces.items() if now - seen > ATTESTATION_TTL_SECONDS]
+            for key in expired:
+                self._attestation_nonces.pop(key, None)
+            if nonce in self._attestation_nonces:
+                raise Denied("nonce de atestacion reutilizado")
+            self._attestation_nonces[nonce] = now
+            # El PID firmado es el del proceso servidor, no el del cliente: es
+            # lo que el cliente compara con el PID de SO_PEERCRED.
+            pid = os.getpid()
+            try:
+                signature = self.signer.sign(attestation_statement(nonce, os.getuid(), pid))
+                fingerprint = self.signer.public_key_sha256()
+            except approval_service.SignerUnavailable as error:
+                raise Denied("firma no disponible para atestacion") from error
+        return {
+            "service_uid": os.getuid(),
+            "pid": pid,
+            "nonce": nonce,
+            "key_id": self.config.key_id,
+            "public_key_sha256": fingerprint,
+            "signature": base64.b64encode(signature).decode("ascii"),
         }
 
     # -- utilidades de almacenamiento -------------------------------------
@@ -1001,6 +1055,8 @@ class AuthorityServer:
         if not isinstance(payload, dict):
             raise Denied("payload invalido")
         authority = self.authority
+        if method == "attest":
+            return {"ok": True, "result": authority.attest(uid, payload)}
         if method in CLIENT_OPERATIONS:
             if method == "status":
                 return {"ok": True, "result": authority.status()}
@@ -1033,6 +1089,24 @@ class AuthorityServer:
                 return {"ok": True, "result": authority.audit_verify(uid)}
         raise Denied(f"metodo no admitido: {method}")
 
+    @staticmethod
+    def _read_message(stream) -> dict | None:
+        line = stream.readline(MAX_MESSAGE_BYTES + 1)
+        if not line or len(line) > MAX_MESSAGE_BYTES:
+            return None
+        try:
+            message = json.loads(line)
+        except ValueError as error:
+            raise Denied("mensaje JSON invalido") from error
+        if not isinstance(message, dict):
+            raise Denied("el mensaje debe ser un objeto JSON")
+        return message
+
+    @staticmethod
+    def _write_message(stream, response: dict) -> None:
+        stream.write(json.dumps(response, sort_keys=True).encode("utf-8") + b"\n")
+        stream.flush()
+
     def _serve_connection(self, connection: socket.socket) -> None:
         try:
             connection.settimeout(SOCKET_TIMEOUT)
@@ -1046,24 +1120,37 @@ class AuthorityServer:
             return
         try:
             with connection.makefile("rwb") as stream:
-                line = stream.readline(MAX_MESSAGE_BYTES + 1)
-                if not line or len(line) > MAX_MESSAGE_BYTES:
-                    stream.write(json.dumps({"ok": False, "error": "mensaje vacio o demasiado grande"}).encode() + b"\n")
-                    stream.flush()
-                    return
+                # Primer mensaje: atestacion obligatoria. Sin ella no se procesa
+                # ninguna operacion, ni siquiera ``status``.
                 try:
-                    request = json.loads(line)
-                    if not isinstance(request, dict):
-                        raise ValueError("no es un objeto")
+                    hello = self._read_message(stream)
+                    if hello is None:
+                        self._write_message(stream, {"ok": False, "error": "mensaje vacio o demasiado grande"})
+                        return
+                    if str(hello.get("method") or "") != "attest":
+                        raise Denied("se exige atestacion antes de cualquier peticion")
+                    if int(hello.get("protocol") or 0) != PROTOCOL_VERSION:
+                        raise Denied("version de protocolo no admitida")
+                    self._write_message(stream, self._handle(uid, hello))
+                except Denied as error:
+                    self._write_message(stream, {"ok": False, "error": str(error)})
+                    return
+
+                # Segundo mensaje: la peticion real, en la misma conexion ya
+                # autenticada por SO_PEERCRED y por la atestacion firmada.
+                try:
+                    request = self._read_message(stream)
+                    if request is None:
+                        self._write_message(stream, {"ok": False, "error": "peticion vacia o demasiado grande"})
+                        return
+                    if str(request.get("method") or "") == "attest":
+                        raise Denied("atestacion duplicada en la conexion")
                     if int(request.get("protocol") or 0) != PROTOCOL_VERSION:
                         raise Denied("version de protocolo no admitida")
                     response = self._handle(uid, request)
                 except Denied as error:
                     response = {"ok": False, "error": str(error)}
-                except ValueError:
-                    response = {"ok": False, "error": "mensaje JSON invalido"}
-                stream.write(json.dumps(response, sort_keys=True).encode() + b"\n")
-                stream.flush()
+                self._write_message(stream, response)
         except (OSError, ValueError):
             pass
         finally:
@@ -1139,6 +1226,24 @@ def _bootstrap(directory: Path) -> Path:
     config_path = root / "authority.json"
     config_path.write_text(json.dumps(params, indent=2), encoding="utf-8")
     os.chmod(config_path, 0o600)
+    # Configuracion del cliente equivalente a la que instala root en
+    # /etc/spec-guardian/client.json: socket, UID/GID esperados y clave publica
+    # pinnada. Sin estos datos el cliente no conecta.
+    client_path = root / "client.json"
+    client_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "socket_path": params["socket_path"],
+                "expected_service_uid": uid,
+                "socket_gid": os.getgid(),
+                "authority_public_key_pem": public_pem.decode("ascii"),
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    os.chmod(client_path, 0o600)
     return config_path
 
 

@@ -61,12 +61,10 @@ rechaza antes de emitir desafío.
 
 ## Uso
 
-Agente:
+Agente (la conexión se toma de `/etc/spec-guardian/client.json`; no hay
+variables de entorno ni opciones que la sustituyan):
 
 ```bash
-export SPEC_GUARDIAN_AUTHORITY_SOCKET=/run/spec-guardian/authority.sock
-export SPEC_GUARDIAN_AUTHORITY_UID=<uid del servicio>
-
 python scripts/approval_cli.py request --project Spec-First-Guardian \
   --spec SPEC-001.md --scope IMPLEMENTACION \
   --operations create_file modify_file --paths src/code.py \
@@ -112,10 +110,41 @@ sudo ./scripts/install_authority.sh --project-root /srv/proyecto \
      --agent-uid 1001 --admin-uid 1000
 ```
 
-Crea el usuario `spec-guardian`, `/etc/spec-guardian/authority.json` (modo 0640),
-`/var/lib/spec-guardian` (0700), la clave de firma (0600), el almacén de confianza
-y la unidad systemd. Se niega si el UID del servicio coincide con el del agente o
-el administrador, o si agente y administrador comparten UID.
+Crea el usuario `spec-guardian`, `/etc/spec-guardian/authority.json` (0640,
+root:servicio), `/etc/spec-guardian/client.json` (0644, root:root; solo contiene
+la clave pública), la clave de firma (0600), el almacén de confianza y la unidad
+systemd. Se niega si el UID del servicio coincide con el del agente o el
+administrador, o si agente y administrador comparten UID.
+
+## Configuración del cliente (autenticación del servidor)
+
+El cliente **no** acepta socket ni UID por entorno: los lee de
+`/etc/spec-guardian/client.json`, que instala root y que el agente no puede
+escribir. El archivo fija el socket, el UID/GID esperados y la clave pública de
+la autoridad:
+
+```json
+{
+  "version": 1,
+  "socket_path": "/run/spec-guardian/authority.sock",
+  "expected_service_uid": 998,
+  "socket_gid": 997,
+  "authority_public_key_pem": "-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----\n"
+}
+```
+
+Antes de enviar una petición el cliente comprueba que la configuración sea un
+archivo regular absoluto, sin enlaces, propiedad de root o del servicio y no
+escribible por grupo u otros; que el socket sea real (no un enlace), del UID del
+servicio, con el GID autorizado y sin acceso para otros; que su directorio no sea
+escribible por el agente; y que `SO_PEERCRED` devuelva exactamente el UID
+esperado. Después exige una atestación firmada con la clave privada de la
+autoridad sobre un nonce aleatorio y la verifica con la clave pública pinnada.
+
+Un socket falso del agente falla en la atestación aunque copie la ruta, el UID y
+la forma de la respuesta: no tiene la clave privada. Si falta la configuración,
+si el UID no coincide o si las credenciales no están disponibles, la operación se
+deniega (`IMPLEMENTACION BLOQUEADA`).
 
 El workspace queda propiedad del servicio y sin escritura para grupo u otros. El
 estado se verifica con:
@@ -135,6 +164,7 @@ Sin separación real de UID, el informe es `"protected": false, "same_uid": true
 {
   "environment": "production",
   "socket_path": "/run/spec-guardian/authority.sock",
+  "socket_group_gid": 997,
   "state_dir": "/var/lib/spec-guardian",
   "projects": {"Spec-First-Guardian": "/srv/proyecto"},
   "admin_uids": [1000],
@@ -155,7 +185,8 @@ Sin separación real de UID, el informe es `"protected": false, "same_uid": true
 
 En `production` la autoridad **no arranca** si: el UID del servicio aparece como
 cliente o administrador; agente y administrador comparten UID; falta OIDC; falta
-la clave; o los archivos/directorios no tienen propietario y permisos correctos.
+la clave; falta `socket_group_gid`; o los archivos/directorios no tienen
+propietario y permisos correctos.
 
 ## Seguridad
 
@@ -170,6 +201,8 @@ la clave; o los archivos/directorios no tienen propietario y permisos correctos.
   autoriza aunque esté en la lista firmada.
 - Registro de revocaciones ausente, corrupto, sin firma o inseguro: denegación.
 - El desafío de aprobación es de un solo uso y caduca.
+- El cliente exige UID de servicio distinto de cero y verifica la atestación
+  firmada; `SPEC_GUARDIAN_AUTHORITY_SOCKET`/`_UID` ya no se consultan.
 
 ## Enforcement real
 

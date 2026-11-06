@@ -4,7 +4,7 @@
 
 ```
 AGENTE (UID agente)
-  │  socket Unix + SO_PEERCRED
+  │  socket Unix + SO_PEERCRED + atestación firmada
   ▼
 AUTORIDAD (UID servicio)          ← dominio B, único con la clave
   → auditoría: intención
@@ -21,7 +21,9 @@ identidad del agente y el alcance; no acepta ninguno de esos datos como prueba.
 
 ## Controles por operación
 
-1. UID del par autorizado (`SO_PEERCRED`); un UID desconocido no puede pedir nada.
+1. UID del par autorizado (`SO_PEERCRED`, obligatorio) y atestación firmada con
+   la clave pública pinnada en `/etc/spec-guardian/client.json`; un UID
+   desconocido, un socket falso o una firma no verificable no pueden pedir nada.
 2. Identidad de agente resuelta por UID, no por lo que declare el cliente.
 3. Cadena de delegación para subagentes: cada salto debe estar configurado y el
    agente final debe coincidir con el último eslabón.

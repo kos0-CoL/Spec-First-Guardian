@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -28,14 +27,9 @@ import authority_client
 
 
 def _client(args) -> authority_client.AuthorityClient:
-    socket_path = args.socket or os.environ.get("SPEC_GUARDIAN_AUTHORITY_SOCKET", "")
-    if not socket_path:
-        raise authority_client.AuthorityUnavailable("SPEC_GUARDIAN_AUTHORITY_SOCKET no configurado")
-    expected = os.environ.get("SPEC_GUARDIAN_AUTHORITY_UID", "").strip()
-    return authority_client.AuthorityClient(
-        socket_path=Path(socket_path),
-        expected_uid=int(expected) if expected.isdigit() else None,
-    )
+    # Sin variables de entorno ni argumentos: la configuracion la instala root
+    # y el cliente verifica UID, socket y clave publica antes de enviar nada.
+    return authority_client.client_from_protected_config()
 
 
 def _print(payload: dict) -> None:
@@ -44,7 +38,6 @@ def _print(payload: dict) -> None:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Consola de la autoridad (SPEC-001).")
-    parser.add_argument("--socket", default=None)
     sub = parser.add_subparsers(dest="command", required=True)
 
     status = sub.add_parser("status", help="Estado de la autoridad.")

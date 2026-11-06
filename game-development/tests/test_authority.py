@@ -7,14 +7,17 @@ par, desafio de un solo uso, almacen de solicitudes con integridad, delegacion,
 revocacion y ejecucion de escrituras dentro del proceso de autoridad.
 """
 
+import base64
 import json
 import os
+import socket
 import sys
 import threading
 import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 TESTS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(TESTS_DIR.parent / "scripts"))
@@ -49,7 +52,9 @@ def bootstrap(directory: Path, workspace: Path, **overrides):
     deadline = time.time() + 5
     while not config.socket_path.exists() and time.time() < deadline:
         time.sleep(0.02)
-    client = authority_client.AuthorityClient(config.socket_path, expected_uid=os.getuid())
+    # La configuracion del cliente la escribe el bootstrap test-only y se carga
+    # con las mismas comprobaciones que la instalada por root.
+    client = authority_client.client_from_protected_config(Path(directory).resolve() / "client.json")
     return SimpleNamespace(server=server, authority=authority, config=config, client=client, thread=thread)
 
 
@@ -271,6 +276,256 @@ class AuthorityTestCase(unittest.TestCase):
             self.assertFalse(approval_service.verify_approval(forged, key_store=self.ctx.authority.key_store))
         finally:
             os.environ.pop("SPEC_GUARDIAN_TRUSTED_KEYS", None)
+
+
+class _RogueAuthority:
+    """Socket falso: imita la respuesta de atestacion, no puede firmarla."""
+
+    def __init__(self, path: Path, expected_fingerprint: str) -> None:
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+        self.path = Path(path)
+        self.expected_fingerprint = expected_fingerprint
+        self.key = Ed25519PrivateKey.generate()
+        self.messages: list = []
+        self._stop = threading.Event()
+        self._socket = None
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    def start(self) -> None:
+        try:
+            self.path.unlink()
+        except FileNotFoundError:
+            pass
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        server.bind(str(self.path))
+        # Mismos permisos que el socket legitimo: la denegacion debe venir de la
+        # atestacion, no de los metadatos del archivo.
+        os.chmod(self.path, 0o660)
+        server.listen(4)
+        server.settimeout(0.2)
+        self._socket = server
+        self._thread.start()
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            try:
+                connection, _ = self._socket.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            try:
+                connection.settimeout(2.0)
+                with connection.makefile("rwb") as stream:
+                    line = stream.readline(65536)
+                    if not line:
+                        continue
+                    message = json.loads(line)
+                    self.messages.append(message)
+                    nonce = str((message.get("payload") or {}).get("nonce") or "")
+                    pid = os.getpid()
+                    statement = authority_client.attestation_statement(nonce, os.getuid(), pid)
+                    signature = self.key.sign(statement)
+                    response = {
+                        "ok": True,
+                        "result": {
+                            "service_uid": os.getuid(),
+                            "pid": pid,
+                            "nonce": nonce,
+                            "public_key_sha256": self.expected_fingerprint,
+                            "signature": base64.b64encode(signature).decode("ascii"),
+                        },
+                    }
+                    stream.write(json.dumps(response).encode("utf-8") + b"\n")
+                    stream.flush()
+                    connection.settimeout(0.5)
+                    try:
+                        extra = stream.readline(65536)
+                    except (OSError, socket.timeout):
+                        extra = b""
+                    if extra:
+                        self.messages.append(json.loads(extra))
+            finally:
+                connection.close()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._socket is not None:
+            try:
+                self._socket.close()
+            except OSError:
+                pass
+        self._thread.join(timeout=5)
+        try:
+            self.path.unlink()
+        except OSError:
+            pass
+
+
+class TestClientAuthentication(unittest.TestCase):
+    """P0: el cliente solo acepta al servicio legitimo, sin configuracion sustituible."""
+
+    def setUp(self):
+        self.workspace = support.temp_dir("sg-authc-ws-")
+        (self.workspace / "src").mkdir()
+        support.write_spec(support.APPROVED_SPEC, directory=self.workspace)
+        self.base = support.temp_dir("sg-authc-")
+        self.ctx = bootstrap(self.base, self.workspace)
+        self.config_path = self.ctx.client.config.source
+
+    def tearDown(self):
+        self.ctx.server.stop()
+        self.ctx.thread.join(timeout=5)
+
+    def _copy_config(self, **overrides) -> Path:
+        raw = json.loads(self.config_path.read_text(encoding="utf-8"))
+        raw.update(overrides)
+        target = support.temp_dir("sg-authc-cfg-") / "client.json"
+        target.write_text(json.dumps(raw), encoding="utf-8")
+        os.chmod(target, 0o600)
+        return target
+
+    def test_legitimate_authority_is_accepted(self):
+        status = self.ctx.client.status()
+        self.assertEqual(status["environment"], "test")
+        self.assertEqual(self.ctx.client.config.service_uid, os.getuid())
+
+    def test_expected_uid_is_mandatory(self):
+        path = self._copy_config()
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw.pop("expected_service_uid")
+        path.write_text(json.dumps(raw), encoding="utf-8")
+        with self.assertRaises(authority_client.AuthorityUnavailable):
+            authority_client.ClientConfig.load(path)
+        with self.assertRaises(authority_client.AuthorityUnavailable):
+            authority_client.ClientConfig(socket_path=path, service_uid=None, socket_gid=os.getgid(), public_key_pem="")
+
+    def test_service_uid_cannot_be_none_or_root(self):
+        for value in (None, 0, -1, True):
+            with self.assertRaises(authority_client.AuthorityUnavailable):
+                authority_client.ClientConfig(
+                    socket_path=self.ctx.config.socket_path,
+                    service_uid=value,
+                    socket_gid=os.getgid(),
+                    public_key_pem=self.ctx.client.config.public_key_pem,
+                )
+
+    def test_environment_cannot_redirect_socket_or_uid(self):
+        rogue_path = self.base / "run" / "rogue.sock"
+        with mock.patch.dict(
+            os.environ,
+            {
+                "SPEC_GUARDIAN_AUTHORITY_SOCKET": str(rogue_path),
+                "SPEC_GUARDIAN_AUTHORITY_UID": "999999",
+            },
+        ):
+            reloaded = authority_client.client_from_protected_config(self.config_path)
+            self.assertEqual(reloaded.config.socket_path, self.ctx.config.socket_path)
+            self.assertEqual(reloaded.config.service_uid, os.getuid())
+            self.assertEqual(reloaded.status()["environment"], "test")
+
+    def test_socket_from_another_uid_is_denied(self):
+        config = authority_client.ClientConfig(
+            socket_path=self.ctx.config.socket_path,
+            service_uid=os.getuid() + 1,
+            socket_gid=os.getgid(),
+            public_key_pem=self.ctx.client.config.public_key_pem,
+        )
+        with self.assertRaises(authority_client.AuthorityUnavailable) as caught:
+            authority_client.AuthorityClient(config).status()
+        self.assertIn("propietario del socket", str(caught.exception))
+
+    def test_peer_uid_mismatch_is_denied(self):
+        credentials = (os.getpid(), os.getuid() + 1, os.getgid())
+        with mock.patch.object(authority_client.AuthorityClient, "_peer_credentials", return_value=credentials):
+            with self.assertRaises(authority_client.AuthorityUnavailable) as caught:
+                self.ctx.client.status()
+        self.assertIn("identidad esperada", str(caught.exception))
+
+    def test_unavailable_peer_credentials_are_denied(self):
+        class NoCredentials:
+            def getsockopt(self, *args, **kwargs):
+                raise OSError("SO_PEERCRED no disponible")
+
+        with self.assertRaises(authority_client.AuthorityUnavailable) as caught:
+            authority_client.AuthorityClient._peer_credentials(NoCredentials())
+        self.assertIn("SO_PEERCRED", str(caught.exception))
+        with mock.patch.object(
+            authority_client.AuthorityClient,
+            "_peer_credentials",
+            side_effect=authority_client.AuthorityUnavailable("credenciales del par no disponibles"),
+        ):
+            with self.assertRaises(authority_client.AuthorityUnavailable):
+                self.ctx.client.status()
+
+    def test_fake_socket_is_denied_without_forwarding_the_request(self):
+        rogue = _RogueAuthority(self.ctx.config.socket_path, self.ctx.client.config.public_key_sha256)
+        self.addCleanup(rogue.stop)
+        rogue.start()
+        with self.assertRaises(authority_client.AuthorityUnavailable) as caught:
+            self.ctx.client.status()
+        self.assertIn("firma", str(caught.exception).lower())
+        self.assertEqual([message.get("method") for message in rogue.messages], ["attest"])
+
+    def test_replaced_socket_symlink_is_denied(self):
+        link = self.base / "run" / "link.sock"
+        link.symlink_to(self.ctx.config.socket_path)
+        config = authority_client.ClientConfig(
+            socket_path=link,
+            service_uid=os.getuid(),
+            socket_gid=os.getgid(),
+            public_key_pem=self.ctx.client.config.public_key_pem,
+        )
+        with self.assertRaises(authority_client.AuthorityUnavailable) as caught:
+            authority_client.AuthorityClient(config).status()
+        self.assertIn("enlace simbolico", str(caught.exception))
+
+    def test_disconnected_service_is_denied(self):
+        self.ctx.server.stop()
+        self.ctx.thread.join(timeout=5)
+        with self.assertRaises(authority_client.AuthorityUnavailable):
+            self.ctx.client.status()
+
+    def test_unprotected_client_config_is_rejected(self):
+        path = self._copy_config()
+        os.chmod(path, 0o666)
+        with self.assertRaises(authority_client.AuthorityUnavailable):
+            authority_client.ClientConfig.load(path)
+        readable = self._copy_config()
+        os.chmod(readable, 0o644)
+        self.assertEqual(authority_client.ClientConfig.load(readable).service_uid, os.getuid())
+        link = support.temp_dir("sg-authc-link-") / "client.json"
+        link.symlink_to(self.config_path)
+        with self.assertRaises(authority_client.AuthorityUnavailable):
+            authority_client.ClientConfig.load(link)
+
+    def test_client_config_in_writable_directory_is_rejected(self):
+        directory = support.temp_dir("sg-authc-dir-")
+        os.chmod(directory, 0o775)
+        target = directory / "client.json"
+        target.write_text(self.config_path.read_text(encoding="utf-8"), encoding="utf-8")
+        os.chmod(target, 0o644)
+        with self.assertRaises(authority_client.AuthorityUnavailable) as caught:
+            authority_client.ClientConfig.load(target)
+        self.assertIn("directorio", str(caught.exception))
+
+    def test_client_config_path_must_be_absolute(self):
+        with self.assertRaises(authority_client.AuthorityUnavailable):
+            authority_client.ClientConfig.load("client.json")
+
+    def test_attestation_statement_is_shared_with_the_service(self):
+        self.assertEqual(authority_client.ATTESTATION_PREFIX, authority_service.ATTESTATION_PREFIX)
+        self.assertEqual(
+            authority_client.attestation_statement("a" * 64, 1000, 42),
+            authority_service.attestation_statement("a" * 64, 1000, 42),
+        )
+
+    def test_nonce_reuse_is_denied_by_the_service(self):
+        nonce = "b" * 64
+        self.ctx.authority.attest(os.getuid(), {"nonce": nonce})
+        with self.assertRaises(authority_service.Denied):
+            self.ctx.authority.attest(os.getuid(), {"nonce": nonce})
 
 
 class TestProductionPreflight(unittest.TestCase):

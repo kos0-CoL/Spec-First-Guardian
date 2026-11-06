@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -9,6 +10,7 @@ sys.path.insert(0, str(TESTS_DIR.parent / "scripts"))
 sys.path.insert(0, str(TESTS_DIR))
 
 import audit_chain  # noqa: E402
+import authority_client  # noqa: E402
 import enforce  # noqa: E402
 import implementation_gate  # noqa: E402
 import support  # noqa: E402
@@ -162,10 +164,17 @@ class TestEnforceClient(unittest.TestCase):
         self.assertFalse(decision["executed"])
 
     def test_without_authority_is_denied(self):
+        signer, public_pem, _ = support.make_signer()
+        config = authority_client.ClientConfig(
+            socket_path=support.temp_dir("sg-enforce-run-") / "no-existe.sock",
+            service_uid=os.getuid(),
+            socket_gid=os.getgid(),
+            public_key_pem=public_pem.decode("ascii"),
+        )
         decision = enforce.apply_write(
             "create_file",
             operation_context=support.operation(self.workspace, content="x"),
-            socket_path="/tmp/sg-no-existe.sock",
+            client_config=config,
         )
         self.assertFalse(decision["allowed"])
         self.assertTrue(any("BLOQUEADA" in reason for reason in decision["reasons"]))

@@ -73,7 +73,12 @@ if [ "$SERVICE_UID" = "$AGENT_UID" ] || [ "$SERVICE_UID" = "$ADMIN_UID" ]; then
   exit 2
 fi
 
-install -d -m 0750 -o root -g "$SERVICE_GROUP" "$CONFIG_DIR"
+# El directorio es atravesable (0755) para que agentes y administrador lean
+# client.json; la configuracion de la autoridad sigue siendo 0640 root:servicio
+# y no es legible por otros.
+install -d -m 0755 -o root -g root "$CONFIG_DIR"
+chown root:root "$CONFIG_DIR"
+chmod 0755 "$CONFIG_DIR"
 install -d -m 0700 -o "$SERVICE_USER" -g "$SERVICE_GROUP" "$STATE_DIR" "$STATE_DIR/keys" "$STATE_DIR/requests" "$STATE_DIR/approvals" "$STATE_DIR/revocations"
 # El directorio del socket es atravesable por el grupo de agentes; el socket
 # (0660) solo lo abre ese grupo. El servicio pertenece a ambos grupos.
@@ -81,15 +86,16 @@ install -d -m 0750 -o "$SERVICE_USER" -g "$AGENT_GROUP" "$RUN_DIR"
 usermod -aG "$AGENT_GROUP" "$SERVICE_USER"
 install -d -m 0750 -o "$SERVICE_USER" -g "$SERVICE_GROUP" "$LOG_DIR"
 
-# Clave de firma y almacen de confianza: solo el usuario del servicio.
-"$PYTHON" - "$STATE_DIR" "$CONFIG_DIR" "$SERVICE_USER" <<'PY'
+# Clave de firma, almacen de confianza y configuracion de cliente verificable.
+"$PYTHON" - "$STATE_DIR" "$CONFIG_DIR" "$SERVICE_UID" "$(getent group "$AGENT_GROUP" | cut -d: -f3)" "$RUN_DIR" <<'PY'
 import json, os, sys
 from pathlib import Path
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-state, config_dir, service_user = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+state, config_dir = Path(sys.argv[1]), Path(sys.argv[2])
+service_uid, agent_gid, run_dir = int(sys.argv[3]), int(sys.argv[4]), Path(sys.argv[5])
 key_path = state / "keys" / "signing_key.pem"
 if not key_path.exists():
     key = Ed25519PrivateKey.generate()
@@ -126,7 +132,28 @@ trusted.write_text(
     encoding="utf-8",
 )
 os.chmod(trusted, 0o600)
+
+# El cliente del agente fija socket, UID/GID esperados y la clave publica
+# pinnada. Es legible por el grupo de agentes (solo datos publicos) y solo
+# root puede modificarlo.
+client_path = config_dir / "client.json"
+client_path.write_text(
+    json.dumps(
+        {
+            "version": 1,
+            "socket_path": str(run_dir / "authority.sock"),
+            "expected_service_uid": service_uid,
+            "socket_gid": agent_gid,
+            "authority_public_key_pem": public_pem.decode("ascii"),
+        },
+        indent=2,
+    ),
+    encoding="utf-8",
+)
+os.chmod(client_path, 0o644)
 PY
+chown root:root "$CONFIG_DIR/client.json"
+chmod 0644 "$CONFIG_DIR/client.json"
 
 if [ ! -f "$CONFIG_DIR/authority.json" ]; then
   "$PYTHON" - "$CONFIG_DIR/authority.json" "$STATE_DIR" "$RUN_DIR" "$LOG_DIR" "$PROJECT_ROOT" "$AGENT_UID" "$ADMIN_UID" "$(getent group "$AGENT_GROUP" | cut -d: -f3)" <<'PY'

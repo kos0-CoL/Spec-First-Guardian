@@ -277,6 +277,12 @@ class SignerBackend:
     def sign(self, payload: bytes) -> bytes:  # pragma: no cover - contrato
         raise NotImplementedError
 
+    def public_key_pem(self) -> bytes:  # pragma: no cover - contrato
+        raise NotImplementedError
+
+    def public_key_sha256(self) -> str:  # pragma: no cover - contrato
+        raise NotImplementedError
+
 
 class FileSignerBackend(SignerBackend):
     """Firma con una clave Ed25519 almacenada en un archivo protegido.
@@ -330,6 +336,25 @@ class FileSignerBackend(SignerBackend):
         if self._private_key is None:
             raise SignerUnavailable(self.error or "firma no disponible")
         return self._private_key.sign(payload)
+
+    def public_key_pem(self) -> bytes:
+        """Clave publica en PEM (solo lectura, sin exponer la privada)."""
+        if self._private_key is None:
+            raise SignerUnavailable(self.error or "firma no disponible")
+        return self._private_key.public_key().public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+
+    def public_key_sha256(self) -> str:
+        """Huella SHA-256 de la clave publica (DER SubjectPublicKeyInfo)."""
+        if self._private_key is None:
+            raise SignerUnavailable(self.error or "firma no disponible")
+        der = self._private_key.public_key().public_bytes(
+            encoding=serialization.Encoding.DER,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        return hashlib.sha256(der).hexdigest()
 
 
 # ---------------------------------------------------------------------------
