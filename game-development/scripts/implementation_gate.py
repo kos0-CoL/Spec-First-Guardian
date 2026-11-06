@@ -123,6 +123,7 @@ class ImplementationGate:
         registry=None,
         audit_path: Path | str | None = None,
         workspace_root: Path | str | None = None,
+        audit=None,
     ) -> None:
         self.approval = approval
         self.spec_path = Path(spec_path)
@@ -137,9 +138,11 @@ class ImplementationGate:
                 if spec_id
                 else None
             )
-        if audit_path is None:
-            raise PathSafetyError("el gate exige un audit log explicito")
-        self.audit = audit_chain.AuditChain(audit_path)
+        if audit is None:
+            if audit_path is None:
+                raise PathSafetyError("el gate exige un audit log explicito")
+            audit = audit_chain.AuditChain(audit_path)
+        self.audit = audit
         self._audit_unavailable = ""
 
     # -- auditoria --------------------------------------------------------
@@ -173,7 +176,7 @@ class ImplementationGate:
                 "fallo al registrar el resultado de la operacion",
                 {"operation": decision.operation, "path": decision.path, "detail": detail},
             )
-        except OSError as error:
+        except (OSError, audit_chain.AuditError) as error:
             # Cannot persist the marker: poison this gate instance so it cannot
             # continue granting permissions in this process.
             self._audit_unavailable = str(error)

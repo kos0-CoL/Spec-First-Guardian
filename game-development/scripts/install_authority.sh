@@ -179,6 +179,7 @@ config = {
     "socket_path": f"{run}/authority.sock",
     "socket_group_gid": int(agent_gid),
     "state_dir": state,
+    "store_path": f"{state}/authority.sqlite3",
     "projects": {"Spec-First-Guardian": project},
     "admin_uids": [int(admin_uid)],
     "clients": [{"uid": int(agent_uid), "agents": ["agente-1"], "delegates": {}}],

@@ -50,6 +50,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import approval_service
 import audit_chain
+import authority_store
 import implementation_gate
 import revocation_registry
 import safe_fs
@@ -150,6 +151,7 @@ class AuthorityConfig:
     trusted_keys_file: Path
     revocations_dir: Path
     audit_log: Path
+    store_path: Path
     signing_key_file: Path | None
     key_id: str
     issuer: str
@@ -226,6 +228,7 @@ class AuthorityConfig:
 
         socket_path = Path(str(required("socket_path")))
         state_dir = Path(str(required("state_dir")))
+        store_path = Path(str(raw.get("store_path") or (state_dir / "authority.sqlite3")))
         for name, value in (("socket_path", socket_path), ("state_dir", state_dir)):
             if not value.is_absolute():
                 raise ConfigError(f"{name} debe ser una ruta absoluta")
@@ -233,6 +236,7 @@ class AuthorityConfig:
         for name, value in (
             ("socket_path", socket_path),
             ("state_dir", state_dir),
+            ("store_path", store_path),
             ("trusted_keys_file", Path(str(required("trusted_keys_file")))),
             ("revocations_dir", Path(str(required("revocations_dir")))),
             ("audit_log", Path(str(required("audit_log")))),
@@ -254,6 +258,7 @@ class AuthorityConfig:
             trusted_keys_file=Path(str(required("trusted_keys_file"))),
             revocations_dir=Path(str(required("revocations_dir"))),
             audit_log=Path(str(required("audit_log"))),
+            store_path=store_path,
             signing_key_file=Path(str(signing_key)) if signing_key else None,
             key_id=str(required("key_id")),
             issuer=str(required("issuer")),
@@ -337,6 +342,11 @@ def preflight(config: AuthorityConfig) -> list:
             problems.append("produccion requiere socket_group_gid (grupo de agentes)")
     for path in (config.trusted_keys_file, config.revocations_dir, config.state_dir, config.socket_path.parent, config.audit_log.parent):
         problems.extend(_owner_and_mode_problems(path, uid))
+    if not config.store_path.is_absolute():
+        problems.append("store_path debe ser una ruta absoluta")
+    problems.extend(_owner_and_mode_problems(config.store_path.parent, uid))
+    if os.path.lexists(config.store_path):
+        problems.extend(_owner_and_mode_problems(config.store_path, uid))
     if config.signing_key_file is not None:
         key_problems = _owner_and_mode_problems(config.signing_key_file, uid, allow_root=False)
         problems.extend(key_problems)
@@ -389,7 +399,15 @@ class Authority:
             key_store=self.key_store,
             environment=config.environment,
         )
-        self.audit = audit_chain.AuditChain(config.audit_log)
+        self._attestation_nonces: dict = {}
+        self._legacy_requests_dir = config.state_dir / "requests"
+        self._legacy_approvals_dir = config.state_dir / "approvals"
+        try:
+            self.store = authority_store.SQLiteAuthorityStore(config.store_path)
+            self._migrate_legacy()
+        except (authority_store.StoreError, authority_store.MigrationError) as error:
+            raise ConfigError(f"almacen de autoridad no utilizable: {error}") from error
+        self.audit = self.store.audit
         self.audit.initialize()
         audit_valid, audit_reason, _ = self.audit.verify()
         if not audit_valid:
@@ -398,12 +416,23 @@ class Authority:
             except audit_chain.AuditError as error:
                 raise ConfigError("auditoria no verificable; autoridad no puede iniciar") from error
         self._audit_unhealthy = not audit_valid
-        self._audit_reconciliable = audit_valid or audit_reason == "audit log ausente despues de inicializar"
-        self._attestation_nonces: dict = {}
-        self._requests_dir = config.state_dir / "requests"
-        self._approvals_dir = config.state_dir / "approvals"
-        self._requests_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-        self._approvals_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self._audit_reconciliable = audit_valid
+
+    def _migrate_legacy(self) -> None:
+        """Importa evidencia JSON/JSONL anterior sin modificar los originales."""
+        legacy_present = (
+            self._legacy_requests_dir.exists()
+            or self._legacy_approvals_dir.exists()
+            or os.path.lexists(self.config.audit_log)
+        )
+        if not legacy_present:
+            return
+        self.store.migrate_legacy(
+            requests_dir=self._legacy_requests_dir if self._legacy_requests_dir.exists() else None,
+            approvals_dir=self._legacy_approvals_dir if self._legacy_approvals_dir.exists() else None,
+            audit_log=self.config.audit_log if os.path.lexists(self.config.audit_log) else None,
+            key_store=self.key_store,
+        )
 
     # -- estado -----------------------------------------------------------
     @property
@@ -487,49 +516,38 @@ class Authority:
         }
 
     # -- utilidades de almacenamiento -------------------------------------
-    def _request_path(self, request_id: str) -> Path:
-        if not request_id.startswith("REQ-") or "/" in request_id:
-            raise Denied("identificador de solicitud invalido")
-        return self._requests_dir / f"{request_id}.json"
-
-    def _save_request(self, request: dict) -> None:
-        payload = {"request": request, "integrity": _sha256(request)}
-        audit_chain.atomic_json_write(self._request_path(str(request["request_id"])), payload, mode=0o600)
+    def _save_request(self, request: dict, event: dict | None = None) -> None:
+        try:
+            self.store.save_request(request, event)
+        except authority_store.StoreError as error:
+            raise Denied(f"no se pudo persistir la solicitud: {error}") from error
 
     def _load_request(self, request_id: str) -> dict:
-        path = self._request_path(request_id)
+        if not request_id.startswith("REQ-") or "/" in request_id:
+            raise Denied("identificador de solicitud invalido")
         try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as error:
-            raise Denied("solicitud desconocida o ilegible") from error
-        if not isinstance(payload, dict) or not isinstance(payload.get("request"), dict):
-            raise Denied("solicitud corrupta")
-        request = payload["request"]
-        if str(payload.get("integrity") or "") != _sha256(request):
-            raise Denied("la solicitud fue alterada despues de registrarse")
-        return request
-
-    def _approval_path(self, spec_id: str, version: str) -> Path:
-        safe = validate.SPEC_ID_PATTERN.match(spec_id)
-        if not safe:
-            raise Denied("spec_id invalido")
-        return self._approvals_dir / f"{spec_id}-{version}.json"
-
-    def _save_bundle(self, spec_id: str, version: str, approval: dict, spec_path: str, project: str) -> None:
-        bundle = {
-            "approval": approval,
-            "context": {"spec_path": spec_path, "project": project},
-        }
-        audit_chain.atomic_json_write(self._approval_path(spec_id, version), bundle, mode=0o600)
+            return self.store.get_request(request_id)
+        except authority_store.StoreError as error:
+            raise Denied(str(error)) from error
 
     def _load_bundle(self, spec_id: str, version: str) -> tuple:
-        path = self._approval_path(spec_id, version)
+        if not validate.SPEC_ID_PATTERN.match(spec_id):
+            raise Denied("spec_id invalido")
+        try:
+            approval, context = self.store.get_grant(spec_id, version)
+            return approval, str(context.get("spec_path") or ""), str(context.get("project") or "")
+        except authority_store.StoreNotFound:
+            pass
+        except authority_store.StoreError as error:
+            raise Denied(f"autorizacion no verificable: {error}") from error
+        # Evidencia historica previa a la migracion: solo lectura, nunca escritura.
+        path = self._legacy_approvals_dir / f"{spec_id}-{version}.json"
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError) as error:
             raise Denied("no hay autorizacion registrada para esa SPEC") from error
-        approval = payload.get("approval")
-        context = payload.get("context") or {}
+        approval = payload.get("approval") if isinstance(payload, dict) else None
+        context = (payload.get("context") if isinstance(payload, dict) else None) or {}
         if not isinstance(approval, dict):
             raise Denied("autorizacion corrupta")
         return approval, str(context.get("spec_path") or ""), str(context.get("project") or "")
@@ -656,8 +674,8 @@ class Authority:
                     "scope": scope,
                 }
             )
-            self._save_request(request)
-            self.audit.append(
+            self._save_request(
+                request,
                 {
                     "stage": "request",
                     "request_id": request["request_id"],
@@ -667,7 +685,7 @@ class Authority:
                     "fingerprint": request["fingerprint"],
                     "scope_hash": request["scope_hash"],
                     "client_uid": uid,
-                }
+                },
             )
         return {
             "request_id": request["request_id"],
@@ -685,11 +703,9 @@ class Authority:
 
     def pending(self, uid: int) -> dict:
         requests = []
-        for path in sorted(self._requests_dir.glob("REQ-*.json")):
-            try:
-                request = self._load_request(path.stem)
-            except Denied:
-                requests.append({"request_id": path.stem, "status": "CORRUPT"})
+        for request in self.store.list_requests():
+            if request.get("status") == "CORRUPT":
+                requests.append({"request_id": request.get("request_id"), "status": "CORRUPT"})
                 continue
             if request.get("status") in (None, "PENDING_USER_APPROVAL"):
                 requests.append(
@@ -740,8 +756,16 @@ class Authority:
             request["session_id"] = secrets.token_urlsafe(32)
             request["review_next_offset"] = 0
             request["review_fingerprint"] = ""
-            self._save_request(request)
-            self.audit.append({"stage": "challenge", "request_id": request_id, "admin_uid": uid})
+            self._save_request(
+                request,
+                {
+                    "stage": "challenge",
+                    "request_id": request_id,
+                    "spec_sha256": request.get("fingerprint"),
+                    "scope_sha256": request.get("scope_hash"),
+                    "admin_uid": uid,
+                },
+            )
         return {
             "request_id": request_id,
             "challenge": token,
@@ -798,7 +822,17 @@ class Authority:
             next_offset = offset + len(page)
             request["review_next_offset"] = next_offset
             request["review_fingerprint"] = fingerprint
-            self._save_request(request)
+            self._save_request(
+                request,
+                {
+                    "stage": "review_page",
+                    "request_id": request_id,
+                    "spec_sha256": fingerprint,
+                    "offset": offset,
+                    "next_offset": next_offset,
+                    "complete": next_offset == len(text),
+                },
+            )
             return {"request_id": request_id, "spec_id": request["spec_id"], "version": request["version"],
                     "fingerprint": fingerprint, "offset": offset, "next_offset": next_offset,
                     "complete": next_offset == len(text), "content": page}
@@ -810,7 +844,14 @@ class Authority:
         request["oidc_state"] = ""
         request["oidc_nonce"] = ""
         request["session_id"] = ""
-        self._save_request(request)
+        self._save_request(
+            request,
+            {
+                "stage": "review_invalidated",
+                "request_id": request.get("request_id"),
+                "spec_sha256": request.get("fingerprint"),
+            },
+        )
 
     def approve(self, uid: int, payload: dict) -> dict:
         self._require_healthy_audit()
@@ -868,35 +909,42 @@ class Authority:
 
             if not self.service.import_request(request):
                 raise Denied("solicitud no reconstruible por la autoridad")
-            request["challenge_used"] = True
-            request["status"] = "APPROVED"
-            self._save_request(request)
+            # Autenticacion y firma ocurren antes de cualquier escritura: si
+            # fallan, la solicitud y el desafio conservan su estado anterior.
             event = self._approval_event(payload, request)
             record = self.service.approve_request(request_id, event)
             if record is None:
                 raise Denied("firma de aprobacion denegada")
-            request["status"] = "APPROVED"
-            request["authorization_event_id"] = record.get("authorization_event_id")
-            self._save_request(request)
-            self._save_bundle(
-                str(request["spec_id"]),
-                str(request["version"]),
-                record,
-                str(request.get("spec_path") or ""),
-                project,
-            )
-            self.audit.append(
-                {
-                    "stage": "approval",
-                    "request_id": request_id,
-                    "spec_id": request.get("spec_id"),
-                    "version": request.get("version"),
-                    "authorization_event_id": record.get("authorization_event_id"),
-                    "approver": record.get("approver"),
-                    "key_id": record.get("key_id"),
-                    "admin_uid": uid,
-                }
-            )
+            replay = []
+            replay_expiry = str(request.get("challenge_expires_at") or _iso(_now() + timedelta(seconds=self.config.challenge_ttl)))
+            for scope, value in (("oidc_nonce", request.get("oidc_nonce")), ("session", request.get("session_id"))):
+                if value:
+                    replay.append((scope, hashlib.sha256(str(value).encode("utf-8")).hexdigest(), replay_expiry))
+            try:
+                self.store.commit_approval(
+                    request_id=request_id,
+                    challenge_hash=stored,
+                    record=record,
+                    context={"spec_path": str(request.get("spec_path") or ""), "project": project},
+                    audit_event={
+                        "stage": "approval",
+                        "request_id": request_id,
+                        "spec_id": request.get("spec_id"),
+                        "version": request.get("version"),
+                        "spec_sha256": request.get("fingerprint"),
+                        "scope_sha256": request.get("scope_hash"),
+                        "authorization_event_id": record.get("authorization_event_id"),
+                        "approver": record.get("approver"),
+                        "key_id": record.get("key_id"),
+                        "admin_uid": uid,
+                    },
+                    replay=replay,
+                )
+            except authority_store.StoreConflict as error:
+                raise Denied(f"aprobacion no confirmada: {error}") from error
+            except authority_store.StoreError as error:
+                self._audit_unhealthy = True
+                raise Denied(f"aprobacion no confirmada: {error}") from error
         return {"approval": record, "request_id": request_id}
 
     def _approval_event(self, payload: dict, request: dict | None = None) -> dict:
@@ -963,6 +1011,7 @@ class Authority:
             registry=self._registry(spec_id),
             audit_path=self.config.audit_log,
             workspace_root=root,
+            audit=self.audit,
         )
         decision = gate.execute(context) if execute else gate.authorize(context)
         result = decision.as_dict()
@@ -1103,7 +1152,13 @@ class Authority:
 
     def audit_verify(self, uid: int) -> dict:
         valid, reason, count = self.audit.verify()
-        return {"valid": valid, "reason": reason, "events": count, "blocked": self.audit.is_blocked()}
+        return {
+            "valid": valid,
+            "reason": reason,
+            "events": count,
+            "blocked": self.audit.is_blocked(),
+            "health": self.audit.health_state(),
+        }
 
 
 class _TestIdentityProvider(approval_service.IdentityProvider):
@@ -1450,6 +1505,8 @@ def main(argv=None) -> int:
     parser.add_argument("--check", action="store_true", help="Solo valida la configuracion y los permisos.")
     parser.add_argument("--bootstrap", type=Path, help="Crea una autoridad de pruebas en el directorio indicado.")
     parser.add_argument("--print-status", action="store_true", help="Muestra el estado y termina.")
+    parser.add_argument("--migrate", action="store_true", help="Importa evidencia JSON/JSONL anterior al almacen durable.")
+    parser.add_argument("--verify-storage", action="store_true", help="Verifica cadena, salud y migracion del almacen.")
     args = parser.parse_args(argv)
 
     if args.bootstrap:
@@ -1463,6 +1520,27 @@ def main(argv=None) -> int:
     except ConfigError as error:
         print(json.dumps({"ok": False, "error": str(error)}), file=sys.stderr)
         return 2
+    if args.migrate or args.verify_storage:
+        key_store = approval_service.TrustedKeyStore.from_config_file(config.trusted_keys_file)
+        if not key_store.configured:
+            print(json.dumps({"ok": False, "error": f"almacen de confianza no utilizable: {key_store.error}"}), file=sys.stderr)
+            return 2
+        try:
+            store = authority_store.SQLiteAuthorityStore(config.store_path)
+            if args.migrate:
+                result = store.migrate_legacy(
+                    requests_dir=config.state_dir / "requests" if (config.state_dir / "requests").exists() else None,
+                    approvals_dir=config.state_dir / "approvals" if (config.state_dir / "approvals").exists() else None,
+                    audit_log=config.audit_log if os.path.lexists(config.audit_log) else None,
+                    key_store=key_store,
+                )
+            else:
+                result = store.verify_store()
+        except (authority_store.StoreError, authority_store.MigrationError) as error:
+            print(json.dumps({"ok": False, "error": str(error)}), file=sys.stderr)
+            return 2
+        print(json.dumps({"ok": bool(result.get("valid", True)), "storage": result}, indent=2, ensure_ascii=False))
+        return 0 if result.get("valid", True) else 2
     problems = preflight(config)
     if problems:
         print(json.dumps({"ok": False, "problems": problems}, indent=2, ensure_ascii=False), file=sys.stderr)

@@ -75,7 +75,17 @@ python scripts/workspace_guard.py verify /srv/proyecto \
 
 # 4. Auditoría
 python scripts/approval_cli.py audit-verify
+
+# 5. Almacén durable: verificar y, si hay evidencia anterior, migrar
+python scripts/authority_service.py --config /etc/spec-guardian/authority.json --verify-storage
+python scripts/authority_service.py --config /etc/spec-guardian/authority.json --migrate
 ```
+
+El almacén SQLite (`store_path`) es la fuente canónica de solicitudes, grants y
+auditoría. La aprobación se confirma en una sola transacción. Los archivos
+JSON/JSONL anteriores se conservan intactos y la migración es idempotente y
+verificable. Esto no sustituye el aislamiento del sistema operativo ni convierte
+la escritura del filesystem en atómica con la base.
 
 Si la verificación del workspace falla, el estado es `NO PROTEGIDO` y así debe
 declararse: el gate seguirá controlando sus escrituras, pero no las del agente

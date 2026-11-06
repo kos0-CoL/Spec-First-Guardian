@@ -166,6 +166,7 @@ Sin separación real de UID, el informe es `"protected": false, "same_uid": true
   "socket_path": "/run/spec-guardian/authority.sock",
   "socket_group_gid": 997,
   "state_dir": "/var/lib/spec-guardian",
+  "store_path": "/var/lib/spec-guardian/authority.sqlite3",
   "projects": {"Spec-First-Guardian": "/srv/proyecto"},
   "admin_uids": [1000],
   "clients": [{"uid": 1001, "agents": ["agente-1"], "delegates": {"agente-1": ["subagente-1"]}}],
@@ -187,6 +188,33 @@ En `production` la autoridad **no arranca** si: el UID del servicio aparece como
 cliente o administrador; agente y administrador comparten UID; falta OIDC; falta
 la clave; falta `socket_group_gid`; o los archivos/directorios no tienen
 propietario y permisos correctos.
+
+## Almacén durable y migración
+
+El estado de la autoridad, los grants y la auditoría viven en SQLite con WAL y
+`synchronous=FULL`, en un archivo `0600` dentro de un directorio `0700`. La
+transacción de aprobación confirma juntos el estado de la solicitud, la emisión
+del grant, el consumo del desafío y el evento de auditoría encadenado. Si algo
+falla, no queda una aprobación parcial.
+
+Esto **no** sustituye el aislamiento del sistema operativo ni garantiza por sí
+solo resistencia a fallos físicos. Una escritura del sistema de archivos no es
+atómica con la base de datos: el gate mantiene intención y resultado separados y
+marca la operación como indeterminada si no puede registrar el resultado.
+
+```bash
+# Verificar cadena, salud y resultado de migración (solo lectura)
+python scripts/authority_service.py --config /etc/spec-guardian/authority.json --verify-storage
+
+# Importar evidencia JSON/JSONL anterior; idempotente y sin modificar originales
+python scripts/authority_service.py --config /etc/spec-guardian/authority.json --migrate
+```
+
+La migración verifica integridad, firmas, cadena y duplicados. Los archivos
+anteriores (`requests/`, `approvals/`, `audit.jsonl`) se conservan intactos como
+evidencia histórica; no se reescriben ni se eliminan. Si el almacén ya contiene
+eventos y la cadena anterior no puede empalmarse sin reescribir historia, la
+migración se rechaza y la autoridad no arranca hasta resolverlo.
 
 ## Seguridad
 
@@ -227,8 +255,11 @@ contrato del servicio, **no** el aislamiento entre UID distintos.
 
 ## Limitaciones
 
-- El proveedor OIDC está implementado, pero sin un IdP real configurado no hay
-  aprobaciones de producción.
+- El proveedor OIDC está implementado, pero falta el callback Authorization Code
+  + PKCE con sesión de servidor; producción sigue bloqueada por diseño.
+- La base SQLite es autoridad local, no un servicio replicado: no hay garantías
+  ante pérdida del disco ni recuperación automática de corrupción. Ante errores
+  de escritura, integridad o sincronización se deniega y se exige recuperación.
 - El aislamiento por UID se implementa y verifica con `workspace_guard.py` y el
   instalador; en este entorno de desarrollo no se han creado dos cuentas reales,
   por lo que el estado local es `NO PROTEGIDO`.

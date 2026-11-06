@@ -141,10 +141,7 @@ class AuthorityTestCase(unittest.TestCase):
         self.ctx.client.authorize(self.operation(), content="x")
         valid, reason, count = self.ctx.authority.audit.verify()
         self.assertTrue(valid, reason)
-        stages = []
-        for line in (self.ctx.config.audit_log).read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                stages.append(json.loads(line)["event"]["stage"])
+        stages = [record["event"]["stage"] for record in self.ctx.authority.audit.store.events()]
         for stage in ("request", "challenge", "approval", "intent", "result"):
             self.assertIn(stage, stages)
 
@@ -168,6 +165,36 @@ class AuthorityTestCase(unittest.TestCase):
         with self.assertRaises(authority_client.AuthorityDenied):
             self.ctx.client.challenge(request["request_id"])
 
+    def test_failed_authentication_does_not_consume_challenge_or_approve(self):
+        request = self.request()
+        challenge = self.ctx.client.challenge(request["request_id"])
+        offset = 0
+        reviewed_pages = 0
+        while offset < challenge["review"]["spec_length"]:
+            page = self.ctx.client.spec_page(request["request_id"], challenge["fingerprint"], offset)
+            offset = page["next_offset"]
+            reviewed_pages += 1
+        payload = {
+            "test_identity": {"subject": "usuario", "confirmed": True},
+            "scope_hash": challenge["scope_hash"],
+            "review_fingerprint": challenge["fingerprint"],
+            "review_pages": reviewed_pages,
+            "oidc_state": challenge["oidc_state"],
+            "session_id": challenge["session_id"],
+        }
+        with mock.patch.object(
+            self.ctx.authority, "_approval_event", side_effect=authority_service.Denied("SETUP INCOMPLETE")
+        ):
+            with self.assertRaises(authority_client.AuthorityDenied):
+                self.ctx.client.approve(request["request_id"], challenge["challenge"], **payload)
+        stored = self.ctx.authority.store.get_request(request["request_id"])
+        self.assertIn(stored.get("status"), (None, "PENDING_USER_APPROVAL"))
+        self.assertFalse(stored["challenge_used"])
+        self.assertFalse(any(item["event"]["stage"] == "approval" for item in self.ctx.authority.audit.store.events()))
+        # El desafio sigue siendo utilizable: la autenticacion es previa al commit.
+        approved = self.ctx.client.approve(request["request_id"], challenge["challenge"], **payload)
+        self.assertEqual(approved["approval"]["spec_id"], "SPEC-001")
+
     def test_wrong_challenge_is_denied(self):
         request = self.request()
         challenge = self.ctx.client.challenge(request["request_id"])
@@ -183,10 +210,22 @@ class AuthorityTestCase(unittest.TestCase):
     # -- integridad -------------------------------------------------------
     def test_tampered_stored_request_is_rejected(self):
         request = self.request()
-        path = self.ctx.authority._request_path(request["request_id"])
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        payload["request"]["authorized_paths"] = ["src/otro.py"]
-        path.write_text(json.dumps(payload), encoding="utf-8")
+        import sqlite3
+
+        connection = sqlite3.connect(str(self.ctx.config.store_path))
+        try:
+            row = connection.execute(
+                "SELECT document FROM requests WHERE request_id=?", (request["request_id"],)
+            ).fetchone()
+            tampered = json.loads(row[0])
+            tampered["authorized_paths"] = ["src/otro.py"]
+            connection.execute(
+                "UPDATE requests SET document=? WHERE request_id=?",
+                (json.dumps(tampered, sort_keys=True, separators=(",", ":")), request["request_id"]),
+            )
+            connection.commit()
+        finally:
+            connection.close()
         # La integridad se comprueba al cargar: ni siquiera se emite desafio.
         with self.assertRaises(authority_client.AuthorityDenied):
             self.ctx.client.challenge(request["request_id"])
