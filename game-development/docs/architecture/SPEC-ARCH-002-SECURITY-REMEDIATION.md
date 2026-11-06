@@ -2,25 +2,29 @@
 spec_id: SPEC-ARCH-002
 title: "Remediación de hallazgos P1 de Etapa B"
 status: DRAFT
-version: 0.1.0
+version: 0.2.0
 author: "Buffy — borrador para revisión humana"
 created_at: "2026-11-06"
-base_commit: "fbae472c17f0eee09d6f11043e47a6ff265e681b"
+base_commit: "d8a681c6226f89b123a2802b3aeb02b18f029368"
+supersedes: "0.1.0 (DRAFT)"
 parent_spec: "SPEC-ARCH-001-HARDENING.md"
 parent_spec_sha256: "77f3afbb113df0a0a2c6b75755281a8305e85caa3e0cd0e68bc9694dc26c4cda"
+decisions: "DECISIONS-ARCH-002-SECURITY-REMEDIATION.md"
 ---
 
 # SPEC-ARCH-002 — Remediación de hallazgos P1 de Etapa B
 
 **Estado:** DRAFT; no aprobada, no autoriza implementación ni producción.<br>
+**Versión:** 0.2.0; revisión documental que sustituye al borrador 0.1.0.<br>
 **Fecha:** 2026-11-06<br>
 **Autor:** Buffy — propuesta técnica para revisión humana.<br>
-**Commit base examinado:** `fbae472c17f0eee09d6f11043e47a6ff265e681b`; el código auditado es el de `094f93d065cbbedce7d9ff35aeb862db92422476`.<br>
+**Baseline documental:** `d8a681c6226f89b123a2802b3aeb02b18f029368`; el código auditado es el de `094f93d065cbbedce7d9ff35aeb862db92422476`.<br>
 **Evidencia de origen:** `docs/audits/AUDIT-ETAPA-B-094F93D.md`.<br>
 **SPEC de referencia:** `SPEC-ARCH-001-HARDENING.md`, versión 0.1.0, SHA-256 `77f3afbb113df0a0a2c6b75755281a8305e85caa3e0cd0e68bc9694dc26c4cda`.<br>
+**Registro de decisiones:** `DECISIONS-ARCH-002-SECURITY-REMEDIATION.md`; toda decisión abierta permanece `PENDING USER DECISION`.<br>
 **Autoridad documental:** este documento no modifica la SPEC-ARCH-001, no corrige código, no cambia tests, configuración, instalador ni estados oficiales, y no habilita OIDC ni producción. Sólo una aprobación humana explícita de esta SPEC, versión y hash autorizará implementación.
 
-> **Nota de autoridad:** la misión trata la SPEC-ARCH-001 como aprobada. El archivo de esa SPEC se autodeclara `DRAFT` y “no aprobada” en su frontmatter y encabezado. No resuelvo esa inconsistencia aquí: queda registrada como decisión pendiente **D-01**. Si la aprobación formal no existe, la cobertura de esta SPEC queda condicionada y no puede declararse conformidad.
+> **Nota de autoridad:** no se encontró en el expediente examinado una aprobación formal de SPEC-ARCH-001: su archivo se autodeclara `DRAFT` y “no aprobada”. La misión la trata como referencia, pero esta SPEC no la declara aprobada ni convierte sus borradores en normativos. La cuestión queda en **D-01**; si no existe aprobación formal, la cobertura de esta SPEC es condicional y no puede declararse conformidad.
 
 ## 1. Resumen ejecutivo
 
@@ -52,7 +56,7 @@ La corrección es acotada en alcance funcional, pero atraviesa almacenamiento, c
 | AUD-01 | `authority_service.py:856-917` autentica/firma antes del commit; `authority_store.py:642-649` sólo marca `challenge_used` dentro de `commit_approval`; `tests/test_authority.py:168-196` fija la reutilización tras un fallo simulado. | Tras fallar `_approval_event`, el desafío sigue válido; la prueba usa `SETUP_INCOMPLETE`, que es configuración y no una autenticación real. El defecto se demuestra con una identidad no confirmada o un proveedor que deniegue. |
 | AUD-02 | `implementation_gate.py:244-292` registra `intent`, escribe y luego `result`; `authority_service.py:405-419` no escanea intenciones huérfanas. | Proceso terminado con `os._exit(9)` tras escribir: sólo `intent`, archivo existente, `valid=True`, `health=HEALTHY`; Authority completa también arranca `HEALTHY`. |
 | AUD-03 | `safe_fs.py:104-109` captura `OSError` y hace `pass`; `write_file`/`delete_file` llaman `_fsync_dir` en `165`, `200` y `215`. | `fsync` de directorio simulado con error: `write_file` devuelve digest y el archivo existe. |
-| AUD-04 | `authority_store.py:820-846` verifica firma y evento no vacío; `899-922` inserta el grant; `924-966` importa eventos sin correlacionarlos. | Cadena legacy sin `approval`: migración `completed`, grant recuperable, eventos `request`, `challenge`, `storage_migration`. |
+| AUD-04 | `authority_store.py:820-846` verifica firma y evento no vacío; `899-922` inserta el grant; `924-966` importa eventos sin correlacionarlos. Además, `authority_service.py:533-553` (`_load_bundle`) lee `approvals/{spec_id}-{version}.json` si el store no tiene el grant. | Cadena legacy sin `approval`: migración `completed`, grant recuperable, eventos `request`, `challenge`, `storage_migration`. El fallback puede devolver el mismo grant sin pasar por la correlación canónica. |
 | AUD-05 | `authority_store.py:656-677` sólo llama `verify_chain()`; `authority_service.py:1502-1545` usa ese `valid` para el CLI. | Solicitud/grant manipulados o `health=AUDIT_INCOMPLETE`: `valid=True`; `get_request`/firma sí detectan el problema al usar. |
 
 ### 2.3 Contradicciones y requisitos insuficientes
@@ -64,6 +68,8 @@ La corrección es acotada en alcance funcional, pero atraviesa almacenamiento, c
 5. **RF-001/RF-006 exigen grant + evento de aprobación, pero la migración no explicita la correlación.** No se puede inferir por posición, nombre de archivo o `request_id`; hace falta una regla verificable. **D-04.**
 6. **RF-005 exige verificar salud y cadena, pero no enumera la verificación de cada solicitud, grant, firma y correlación.** El `--verify-storage` actual interpreta “cadena válida” como “store válido”, lo que es insuficiente. **D-05.**
 7. **La compatibilidad de registros históricos no está decidida.** Un grant firmado sin evento correlacionable es criptográficamente válido pero no satisface la invariante de aprobación. Rechazarlo puede bloquear historia legítima; aceptarlo debilita la trazabilidad. **D-04.**
+8. **El fallback legacy puede eludir la corrección de AUD-04.** La revisión independiente (OBS-01) comprobó que `_load_bundle` devuelve un approval desde el directorio histórico cuando el store no lo encuentra. La migración y el fallback son dos rutas de autorización distintas; cerrar sólo la migración no demuestra que un grant no correlacionado no pueda autorizar. La SPEC añade el requisito mínimo de paridad de verificación y pruebas negativas, sin absorber la remediación general de AUD-06. **D-04/D-08/OBS-01.**
+9. **La reconciliación humana no está demostrada.** `reconcile` exige UID administrador y reautenticación, pero en producción `_approval_event` sigue denegando por `SETUP_INCOMPLETE`; la prueba existente usa identidad simulada. Además, `reconcile` sólo cierra una auditoría incompleta, no resuelve una operación huérfana. No se inventa un mecanismo nuevo: la resolución de huérfanas queda bloqueada hasta que exista uno autorizado. **OBS-03/D-07.**
 
 ## 3. Alcance
 
@@ -80,7 +86,7 @@ La corrección es acotada en alcance funcional, pero atraviesa almacenamiento, c
 ### 3.2 Excluido
 
 - Implementar OIDC, callback Authorization Code + PKCE, UI humana, sesión de navegador o habilitar producción.
-- Corregir AUD-06 a AUD-17, salvo la dependencia explícita que AUD-04 pueda tener con el fallback legacy; ese fallback no se modifica en esta misión.
+- Corregir AUD-06 a AUD-17, salvo el **ajuste mínimo anti-bypass** del fallback legacy directamente necesario para AUD-04 (RF-015.7–RF-015.9 y AC-015d). La remediación general de AUD-06, el rediseño del almacenamiento legacy y la eliminación completa del fallback quedan fuera de alcance.
 - Añadir estados documentales oficiales, cambiar los siete estados existentes o redefinir la semántica de aprobación documental.
 - Reescribir la arquitectura de Authority, el esquema de firmas, el algoritmo criptográfico o el modelo de permisos.
 - Borrar, mover o reinterpretar silenciosamente datos históricos.
@@ -94,6 +100,7 @@ La corrección es acotada en alcance funcional, pero atraviesa almacenamiento, c
 - SQLite sigue siendo el backend inicial; otra implementación del contrato debe cumplir los mismos resultados.
 - La autoridad es el único escritor autorizado del store y del journal; las pruebas multiproceso usan ese contrato.
 - La aprobación humana y OIDC no forman parte de esta corrección; producción sigue bloqueada por `SETUP_INCOMPLETE`.
+- Existen al menos dos rutas de lectura de autorizaciones: el store canónico y el fallback de `approvals/{spec_id}-{version}.json`. Ambas deben satisfacer la misma verificación de seguridad; el fallback no es una excepción de política.
 - Una operación de archivo y una escritura SQLite no son atómicas entre sí; la corrección debe hacer visible esa ambigüedad, no ocultarla.
 
 ## 4. Estados y vocabulario
@@ -114,7 +121,12 @@ No se introduce un estado documental, de solicitud, de autenticación, de autori
 ### 4.2 Definiciones operativas
 
 - **Desafío presentado:** solicitud de aprobación que incluye un token cuyo SHA-256 coincide con el `challenge_hash` almacenado.
-- **Fallo de autenticación/firma:** identidad no verificable, `subject`/nonce/issuer/audience/exp/iat/auth_time/PKCE inválidos, error del proveedor, o firma no producida o no verificable. Un fallo de configuración previo a una tentativa autenticada (`SETUP_INCOMPLETE`, proveedor no configurado) no es un fallo de autenticación y no consume el desafío.
+- **Rechazo definitivo de autenticación:** el proveedor o el verificador establece, sin ambigüedad, que la credencial o la identidad no es aceptable: firma/claims inválidos, `issuer`/`audience`/`subject`/nonce/exp/iat/auth_time incorrectos, replay, o denegación explícita del proveedor. Consume e invalida el desafío; no hay aprobación.
+- **Rechazo definitivo de binding/revisión:** tras demostrar posesión del desafío, `state`, sesión, PKCE, fingerprint de revisión, scope o contenido no coinciden de forma concluyente. No es un fallo transitorio; consume e invalida el desafío en la política recomendada (D-02).
+- **Fallo transitorio del proveedor:** timeout, error de red, `5xx`, indisponibilidad o rate limit sin respuesta definitiva de identidad. No consume el desafío, no aprueba y debe auditarse; se permite reintento acotado dentro de la vigencia del desafío y con backoff.
+- **Error de configuración:** `SETUP_INCOMPLETE`, proveedor no configurado, trust store ausente o callback no disponible. No es un rechazo de identidad, no consume el desafío y no aprueba.
+- **Firma rechazada:** una firma producida que no verifica es un fallo definitivo de integridad: invalida el desafío y bloquea la aprobación. **No** se confunde con el firmante no disponible o un error interno antes de producir firma, que es técnico, no consume el desafío y no aprueba.
+- **Commit indeterminado:** la autenticación/firma pudo completarse pero no puede demostrarse el estado del commit; se bloquea como `INDETERMINATE`/`RECONCILIATION_REQUIRED`, no se reintenta a ciegas y no se declara éxito.
 - **Intención durable:** registro persistido y confirmado antes de cualquier efecto en el filesystem.
 - **Resultado durable:** registro persistido del efecto y de la durabilidad observada.
 - **Intención huérfana:** intención durable sin resultado terminal correlacionado, tras reinicio o nueva instancia.
@@ -130,15 +142,43 @@ No se introduce un estado documental, de solicitud, de autenticación, de autori
 **Requisitos:**
 
 - **RF-012.1** Un intento que presenta un desafío cuyo hash coincide con el almacenado DEBE ser de un solo uso para el éxito. Un mismo token no puede producir dos aprobaciones ni dos grants.
-- **RF-012.2** Si falla la autenticación o la firma después de comprobar la posesión del desafío, el sistema DEBE impedir que ese token vuelva a ser aceptado. La solicitud NO DEBE quedar `APPROVED` y NO DEBE emitirse grant. Un fallo de configuración previo a una tentativa autenticada (`SETUP_INCOMPLETE` o proveedor no configurado) NO DEBE consumir el desafío.
+- **RF-012.2** Un **rechazo definitivo de autenticación o de binding/revisión** posterior a la posesión del desafío DEBE invalidarlo permanentemente y registrar evidencia durable. La solicitud NO DEBE quedar `APPROVED`, NO DEBE emitirse grant y el mismo token NO DEBE volver a aceptarse. Un fallo transitorio del proveedor, un error de configuración (`SETUP_INCOMPLETE`, proveedor no configurado) o el firmante no disponible NO son rechazos de identidad y NO DEBEN consumir el desafío.
 - **RF-012.3** La invalidación y la evidencia del fallo DEBEN persistirse de forma durable y atómica respecto de la comprobación de uso. Si no pueden persistirse, la tentativa DEBE fallar cerrada: no hay aprobación, no se declara salud `HEALTHY` y la autoridad no concede nuevas operaciones hasta recuperar.
 - **RF-012.4** Un intento con hash de desafío incorrecto, solicitud inexistente, token ausente o formato inválido NO DEBE consumir un desafío válido; no debe permitir que un tercero sin posesión del token agote desafíos ajenos.
 - **RF-012.5** La invalidación DEBE usar una comprobación y actualización atómicas (compare-and-swap o equivalente). Si dos intentos compiten, como máximo uno puede consumir el desafío; el otro DEBE denegarse. Ningún resultado de la carrera puede ser `APPROVED` sin autenticación y commit completos.
 - **RF-012.6** La autoridad PUEDE emitir un desafío nuevo para la misma solicitud sólo mediante una acción administrativa explícita, no automática, y sólo si la solicitud no está `APPROVED` y la SPEC/alcance no cambiaron. El token anterior DEBE quedar permanentemente inutilizable; emitir uno nuevo no revalida el anterior. La elección entre reemitir sobre la misma solicitud o exigir una solicitud nueva es **D-03**.
 - **RF-012.7** Un fallo de commit con resultado ambiguo NO DEBE presentarse como éxito ni permitir un reintento ciego. Si no puede demostrarse que no hubo commit, el store/authority DEBE bloquearse como `INDETERMINATE`/`RECONCILIATION_REQUIRED` y requerir reconciliación.
-- **RF-012.8** El fallo DEBE dejar evidencia consultable sin incluir el token, el código OIDC, el nonce ni secretos equivalentes. La evidencia debe permitir distinguir “no autenticado”, “desafío invalidado” y “aprobación confirmada”.
+- **RF-012.8** El fallo DEBE dejar evidencia consultable sin incluir el token, el código OIDC, el nonce ni secretos equivalentes. La evidencia debe permitir distinguir, como mínimo, `authentication_rejected`, `binding_rejected`, `provider_unavailable`, `configuration_error`, `challenge_invalidated`, `challenge_expired` y `approval_confirmed`.
+- **RF-012.9** Un fallo transitorio DEBE registrarse, aplicar backoff y limitar reintentos, pero NO DEBE invalidar automáticamente el desafío ni rotarlo. La solicitud permanece pendiente y sin aprobación. Si se agota la vigencia o el límite de reintentos, el desafío expira y se requiere una reemisión administrativa conforme a D-03; el resultado no se etiqueta como rechazo de identidad.
+- **RF-012.10** El estado de la tentativa y la causa deben ser consultables sin secretos. Un error técnico nunca puede convertirse en `APPROVED`, aunque el proveedor haya podido autenticar: la aprobación sólo existe después de un commit completo y durable.
+- **RF-012.11** Si la autenticación/firma tuvo éxito pero el commit es ambiguo, el desafío NO DEBE reutilizarse para un reintento ciego; la autoridad DEBE bloquearse como `INDETERMINATE`/`RECONCILIATION_REQUIRED` y preservar la evidencia.
 
-**Límite de alcance.** El mínimo obligatorio de RF-012.2 es el fallo de autenticación/firma. La extensión a fallos de `state`, sesión, scope o revisión posteriores a la prueba de posesión del desafío es una decisión de seguridad separada; no se presume aprobada. **D-02.**
+**Tabla de decisión propuesta (sujeta a D-02).** Las filas marcadas «obligatorio» son el mínimo de esta SPEC; las demás son la recomendación que el usuario debe aprobar o rechazar:
+
+| Resultado observado | ¿Consume/invalida el desafío? | ¿Aprueba? | Estado/evidencia |
+|---|---|---|---|
+| Token ausente, hash incorrecto, formato no interpretable o solicitud inexistente | No; no hay posesión demostrada | No | `challenge_not_presented`/`bad_challenge`; no altera un desafío válido |
+| Firma/claims/subject/nonce/issuer/audience/exp/iat/auth_time inválidos; replay; denegación explícita | Sí; rechazo definitivo (obligatorio) | No | `authentication_rejected`; desafío invalidado durablemente |
+| `state`, sesión, PKCE, fingerprint, scope o revisión divergentes tras posesión | Sí; rechazo definitivo de binding (recomendado D-02-b) | No | `binding_rejected`; desafío invalidado |
+| Firma producida que no verifica | Sí; rechazo definitivo de integridad (obligatorio) | No | `signature_invalid`; salud/registro coherente |
+| `SETUP_INCOMPLETE`, proveedor/callback/trust store no configurado | No | No | `configuration_error`; desafío intacto |
+| Timeout, red, `5xx`, indisponibilidad o rate limit sin respuesta definitiva | No; backoff y límite de reintentos | No | `provider_unavailable`; desafío activo hasta expirar |
+| Firmante no disponible o error interno antes de producir firma | No | No | `technical_error`; no se declara rechazo de identidad |
+| Autenticación/firma correctas, commit ambiguo | Sí; no reutilizar | No | `INDETERMINATE`/`RECONCILIATION_REQUIRED` |
+
+**Transiciones internas del desafío.** Estos nombres describen el ciclo de vida del desafío; no son estados documentales, de solicitud, de autorización ni de salud, y pueden representarse con campos existentes. Las transiciones son normativas:
+
+| Estado interno | Entrada | Salida permitida | Prohibición |
+|---|---|---|---|
+| `ACTIVE` | Desafío emitido, no usado | `AUTHENTICATING` por CAS; `EXPIRED` por TTL | No se usa para aprobar; no hay dos intentos simultáneos. |
+| `AUTHENTICATING` | Intento con hash correcto y CAS ganador | `AUTHENTICATED` si auth/firma correctas; `ACTIVE` sólo por fallo transitorio/configuración/técnico; `INVALIDATED` por rechazo definitivo | No aprobar; no emitir grant; no reutilizar el intento. |
+| `AUTHENTICATED` | Auth/firma correctas, pendiente de commit | `CONSUMED` sólo con commit completo y durable; `INDETERMINATE` si el commit es ambiguo; `INVALIDATED` si el commit se rechaza definitivamente | No reintentar a ciegas; no devolver el token a `ACTIVE`. |
+| `CONSUMED` | Commit completo y durable | Terminal | No se reutiliza; no se reemite el mismo token. |
+| `INVALIDATED` | Rechazo definitivo de auth/binding/firma o commit rechazado | Terminal; sólo un desafío nuevo puede sustituirlo (D-03) | No se resetea ni se revalida. |
+| `EXPIRED` | TTL agotado | Terminal; reemisión administrativa (D-03) | No se usa para aprobar. |
+| `INDETERMINATE` | Efecto/commit no demostrable | Sólo reconciliación autorizada; no es un estado de aprobación | No se reintenta, no se borra, no se declara éxito. |
+
+**Límite de alcance.** El mínimo obligatorio es el rechazo definitivo de autenticación/firma; la inclusión de `state`/sesión/scope/revisión es la opción recomendada D-02-b, no una decisión ya aprobada. La rotación automática no se adopta: requiere autorización y no puede debilitar la propiedad de un solo uso. **D-02.**
 
 **No cubierto por RF-012.** No se implementa el callback OIDC ni se acepta un token directo del agente. La producción sigue denegando por `SETUP_INCOMPLETE` hasta que exista el flujo aprobado de SPEC-ARCH-001.
 
@@ -157,8 +197,11 @@ No se introduce un estado documental, de solicitud, de autenticación, de autori
 - **RF-013.7** Dos gates o procesos que intenten registrar la misma operación DEBEN producir como máximo una intención ejecutable y un resultado terminal. Un duplicado DEBE denegarse o resolverse como conflicto; nunca dos efectos no idempotentes.
 - **RF-013.8** Cualquier gate que ejecute operaciones DEBE usar un sink durable que soporte el journal y la consulta de intenciones huérfanas. Si el sink no puede demostrar esa capacidad, DEBE denegar las operaciones en lugar de degradar a `intent`/`result` sin recuperación.
 - **RF-013.9** La API de resultado DEBE distinguir `executed`, `durability` y `audit_complete`; `allowed` por sí solo NO DEBE interpretarse como éxito durable. Un cliente que ignore los campos nuevos no debe recibir una afirmación de éxito no demostrada.
+- **RF-013.10** El journal y SQLite son dominios de persistencia distintos. La SPEC NO afirma atomicidad entre ambos: una operación cuyo efecto externo ocurrió pero cuyo resultado no pudo registrarse durablemente DEBE representarse como `INDETERMINATE`/`RECONCILIATION_REQUIRED`, nunca como éxito. La intención durable se confirma antes del efecto; el resultado se confirma después. Las ventanas entre ambos son parte del contrato, no un detalle oculto (recomendación D-06).
+- **RF-013.11** La recuperación de una intención huérfana DEBE ser explícita y humana. Ningún proceso, reinicio, tarea de mantenimiento o agente puede resolverla, borrarla, revertirla ni reejecutarla automáticamente. La inspección de sólo lectura puede informar la anomalía, pero no la convierte en autorización.
+- **RF-013.12** Si no existe un mecanismo administrativo autorizado que demuestre identidad humana reautenticada y aporte evidencia de la operación, la resolución permanece bloqueada. No se inventa un mecanismo alternativo ni se acepta una firma del propio agente. **OBS-03/D-07.**
 
-**Límite de alcance.** No se especifica aquí la tabla, archivo, transacción o algoritmo concreto del journal; esas son decisiones de implementación. Lo normativo es que la intención preceda al efecto, que el resultado sea durable y que una intención huérfana bloquee con reconciliación humana.
+**Límite de alcance.** No se especifica aquí la tabla, archivo, transacción o algoritmo concreto del journal; esas son decisiones de implementación (D-06). Lo normativo es que la intención preceda al efecto, que el resultado sea durable, que la falta de atomicidad se represente como ambigüedad y que una intención huérfana bloquee con reconciliación humana autorizada.
 
 ### RF-014 — Durabilidad verificable de las operaciones de archivo (AUD-03)
 
@@ -184,12 +227,15 @@ No se introduce un estado documental, de solicitud, de autenticación, de autori
 
 - **RF-015.1** Para cada grant que se pretenda importar, la migración DEBE verificar que su `authorization_event_id` corresponde a un evento `approval` verificable en la cadena de auditoría que se importa o que ya existe en el store.
 - **RF-015.2** La correlación DEBE comprobar, cuando los campos estén presentes, que `spec_id`, `version`, `fingerprint`, `scope_sha256`/alcance y el identificador de evento del grant coinciden con la solicitud y el evento. No se admite correlación inferida por posición, nombre de archivo, orden de importación o `request_id` no firmado.
-- **RF-015.3** Si un grant no tiene evento correlacionable, tiene un evento de otra solicitud/versión o el evento no es verificable, la migración NO DEBE insertar ese grant ni registrar la migración como `completed`. La transacción completa DEBE revertirse y el CLI DEBE devolver un resultado de error no cero.
-- **RF-015.4** La migración DEBE ser todo-o-nada para el conjunto importado: no puede dejar solicitudes, grants o eventos parciales, ni un registro `meta` que sugiera éxito. Los archivos originales DEBEN permanecer intactos en bytes.
+- **RF-015.3** Si un grant no tiene evento correlacionable, tiene un evento de otra solicitud/versión o el evento no es verificable, la migración NO DEBE insertarlo como activo ni registrar un `completed` incondicional. Según D-04, debe abortar toda la transacción o registrar el grant en cuarentena no autorizable con su fuente/hash; en ambos casos el CLI DEBE devolver un resultado no exitoso o `quarantined`, nunca un éxito integral.
+- **RF-015.4** La migración DEBE ser todo-o-nada para los datos activos: no puede dejar solicitudes, grants o eventos activos parciales, ni un registro `meta` que sugiera éxito integral. Una cuarentena explícita, separada y no autorizable es la única excepción permitida si D-04 la autoriza. Los archivos originales DEBEN permanecer intactos en bytes.
 - **RF-015.5** Una base ya migrada que contenga grants sin correlación DEBE ser detectada por la verificación de RF-016 y NO DEBE autorizar esos grants. El sistema no debe borrar ni “reparar” el grant automáticamente; debe bloquear y requerir la política humana de **D-04**.
 - **RF-015.6** La migración de registros válidos debe seguir siendo idempotente y conservar la idempotencia existente; una segunda ejecución con las mismas fuentes no debe duplicar grants ni eventos.
+- **RF-015.7** **Paridad de rutas (anti-bypass).** Toda ruta de autorización, incluida la compatibilidad legacy de `_load_bundle`/`approvals/*.json`, DEBE aplicar la misma verificación de firma, contexto, `authorization_event_id`↔evento `approval`, fingerprint/scope/versión y revocación que RF-015.1–RF-015.3. Ningún fallback puede devolver un grant no correlacionado, de otra solicitud o marcado como rechazado/cuarentenado. Una firma válida no sustituye el evento de aprobación.
+- **RF-015.8** Si existe un registro de migración que marca un grant como rechazado o en cuarentena, ninguna ruta de lectura, incluido el fallback, puede usarlo para autorizar. El fallback DEBE ser de sólo lectura, no puede crear eventos ni migrar datos y no puede “reparar” la correlación.
+- **RF-015.9** El fallback legacy sólo puede conservarse como compatibilidad de lectura si no elude RF-015.7. Su eliminación o rediseño general pertenece a AUD-06 y no se implementa aquí. La prueba negativa debe demostrar que un grant no correlacionado o cuarentenado no autoriza ni siquiera cuando el store canónico no lo contiene.
 
-**Límite de alcance.** La decisión de rechazar toda la migración, cuarentenar grants individuales o exigir re-aprobación histórica es **D-04**. Esta SPEC exige el resultado de seguridad mínimo: ningún grant no correlacionado puede quedar autorizable ni puede declararse migración exitosa.
+**Límite de alcance.** La decisión de rechazar toda la migración, cuarentenar grants individuales o exigir re-aprobación histórica es **D-04**. Esta SPEC exige el resultado de seguridad mínimo: ningún grant no correlacionado puede quedar autorizable ni puede declararse migración exitosa. El ajuste del fallback se limita a la paridad de verificación anterior; no absorbe la remediación completa de AUD-06.
 
 ### RF-016 — Verificación integral y veraz del almacén (AUD-05)
 
@@ -207,14 +253,30 @@ No se introduce un estado documental, de solicitud, de autenticación, de autori
   - los identificadores de replay y sus expiraciones;
   - las intenciones de operación sin resultado terminal;
   - que no existan grants autorizables sin evento correlacionado.
-- **RF-016.2** El resultado DEBE separar `chain_valid`, `store_valid`, `health` y `ok`. `ok`/`valid` sólo pueden ser verdaderos si todas las comprobaciones anteriores pasan y la salud es `HEALTHY`. `chain_valid` puede ser verdadero mientras `store_valid` es falso; no se debe confundir uno con otro.
-- **RF-016.3** El CLI DEBE devolver exit code 0 sólo si `ok=true`. Cualquier store inválido, salud no `HEALTHY`, firma no verificable, grant huérfano, intención huérfana o error de lectura DEBE producir exit code no cero y un diagnóstico acotado.
-- **RF-016.4** La verificación DEBE ser de sólo lectura lógica: no debe insertar, actualizar, borrar, migrar, reconciliar, reparar ni marcar salud. Si el store no existe, no puede abrirse o el almacén de confianza no está configurado, DEBE informar fallo cerrado; no debe crear un store nuevo ni asumir salud.
+- **RF-016.2** El resultado DEBE separar `chain_valid`, `store_valid`, `health` y `ok`, y DEBE publicar un contrato estable (propuesta sujeta a D-05):
+
+| Campo | Significado | Regla |
+|---|---|---|
+| `chain_valid` | Integridad de la cadena de auditoría: secuencia, `prev`, hash y cuerpo. | Puede ser `true` con otros fallos; no implica store íntegro. |
+| `store_valid` | Integridad estructural y semántica: esquema, `meta`, migración, solicitudes, grants/firmas, correlación, replay, revocación, journal/huérfanas y cuarentena. | `false` si falla cualquier comprobación de RF-016.1. |
+| `health` | Estado de salud conocido: `HEALTHY`, `AUDIT_INCOMPLETE`, `AUDIT_CORRUPT`, `AUDIT_UNAVAILABLE` o `RECONCILIATION_REQUIRED`. | `UNKNOWN` o ausente se trata como no saludable. |
+| `ok` | Resultado integral. | `true` sólo si `chain_valid && store_valid && health == "HEALTHY"` y no hay errores. |
+| `valid` | Alias legacy de compatibilidad. | DEBE ser exactamente igual a `ok`; nunca significa “sólo cadena”. |
+| `reason` / `chain_reason` | Motivo agregado y motivo específico de cadena. | No contienen secretos; pueden ser `null` si no aplica. |
+| `checks` | Mapa de comprobaciones con `pass`, `fail`, `blocked` o `not_applicable`. | `not_applicable` no convierte un fallo en éxito. |
+| `errors` | Lista determinista de errores con código, referencia y mensaje acotado. | Un solo error impide `ok=true`. |
+| `counts` | Conteos de eventos, solicitudes, grants, grants en cuarentena, huérfanas y revocaciones. | Sólo informativo; no autoriza. |
+| `migration` | Registro de migración y su estado. | Incompleto, fallido o ausente cuando se esperaba migración => `store_valid=false`. |
+| `format_version` | Versión del contrato de verificación. | Permite a consumidores rechazar una versión desconocida. |
+
+- **RF-016.3** El CLI DEBE devolver `0` sólo si `ok=true`. Cualquier store inválido, salud no `HEALTHY`, firma no verificable, grant no correlacionado o en cuarentena, intención huérfana, migración inconsistente o error de lectura/trust store DEBE producir `2` y un diagnóstico acotado. Un error de uso de la CLI puede usar el código convencional de `argparse`; no puede confundirse con `ok=true`.
+- **RF-016.4** La verificación DEBE ser de sólo lectura lógica: no debe insertar, actualizar, borrar, migrar, reconciliar, reparar ni marcar salud. Si el store no existe, no puede abrirse o el almacén de confianza no está configurado, DEBE informar fallo cerrado; no debe crear un store nuevo ni asumir salud. La inspección de sólo lectura no es una vía de autorización.
 - **RF-016.5** El diagnóstico NO DEBE incluir tokens, códigos, nonces, claves privadas, contenido completo de grants ni datos sensibles innecesarios. Puede incluir identificadores, conteos, motivos y rutas relativas.
 - **RF-016.6** La verificación DEBE ser reproducible sobre el mismo store y no debe modificar el resultado por el orden de las filas; los conteos y errores deben ser deterministas.
-- **RF-016.7** La compatibilidad del campo `valid` debe ser fail-closed: los consumidores existentes que lo interpretan como “store íntegro” no deben recibir `true` cuando la salud está bloqueada o un registro no verifica. La forma exacta de conservar aliases y campos es **D-05**.
+- **RF-016.7** La compatibilidad del campo `valid` debe ser fail-closed: los consumidores existentes que lo interpretan como “store íntegro” no deben recibir `true` cuando la salud está bloqueada o un registro no verifica. `valid` DEBE ser alias de `ok`; conservar `valid` como “sólo cadena” queda prohibido. La forma exacta de conservar aliases y campos es **D-05**.
+- **RF-016.8** La verificación NO DEBE crear, migrar, reconciliar ni modificar la base, el journal, los archivos legacy, WAL/SHM o la salud. Debe poder ejecutarse sobre una copia de sólo lectura y no debe convertir un store desconocido en uno vacío.
 
-**Límite de alcance.** RF-016 no detecta truncación de la cola frente a un ancla externa (AUD-07), no verifica backups y no demuestra que el filesystem sea durable. Es una verificación del store local, no una prueba de historia completa.
+**Límite de alcance.** RF-016 no detecta truncación de la cola frente a un ancla externa (AUD-07), no verifica backups y no demuestra que el filesystem sea durable. Es una verificación del store local, no una prueba de historia completa. La forma física de los campos y la compatibilidad de adaptadores son D-05.
 
 ## 6. Requisitos de seguridad
 
@@ -239,44 +301,59 @@ No se introduce un estado documental, de solicitud, de autenticación, de autori
 - **INV-08** `verify-storage` sólo devuelve `ok=true` si todas las comprobaciones de RF-016 pasan y la salud es `HEALTHY`.
 - **INV-09** La recuperación no reejecuta, revierte ni borra automáticamente una operación no idempotente.
 - **INV-10** Los archivos históricos y la evidencia previa se preservan en bytes; una migración fallida no deja estado parcial.
+- **INV-11** Ninguna ruta de autorización, incluido el fallback legacy, puede devolver un grant que no satisfaga RF-015.1–RF-015.3; una ruta alternativa no puede eludir la correlación.
+- **INV-12** Un fallo transitorio o de configuración nunca se convierte en rechazo de identidad, aprobación ni consumo permanente del desafío; un rechazo definitivo nunca deja el desafío reutilizable.
+- **INV-13** `valid` es alias exacto de `ok`; `chain_valid=true` no implica store íntegro.
+- **INV-14** La inspección de sólo lectura, el diagnóstico y la cuarentena no autorizan operaciones ni sustituyen una decisión humana.
 
 ## 8. Criterios de aceptación verificables
 
 | ID | Criterio | Evidencia mínima |
 |---|---|---|
-| AC-012a | Tras un fallo real de autenticación/firma (identidad no confirmada o proveedor que deniega) con desafío válido, la solicitud no está `APPROVED`, no hay grant y el mismo desafío es rechazado al reintentar. Un `SETUP_INCOMPLETE` no consume el desafío. | Unitario + reinicio; evento de fallo durable; `approve` posterior con el mismo token denegado; prueba separada de `SETUP_INCOMPLETE` sin consumo. |
-| AC-012b | Un desafío nuevo, emitido explícitamente tras la invalidación, funciona; el anterior sigue denegado. | Unitario + store nuevo; el token anterior no se revalida. |
-| AC-012c | Dos intentos concurrentes con el mismo desafío producen como máximo un éxito; un fallo de autenticación no puede convivir con una aprobación. | Multiproceso con `fork`; exactamente 0 o 1 grant, nunca 2; sin `APPROVED` por el intento fallido. |
+| AC-012a | Tras un rechazo definitivo real de autenticación/firma (proveedor que deniega o firma producida no verificable) con desafío válido, la solicitud no está `APPROVED`, no hay grant, el fallo queda registrado y el mismo desafío es rechazado al reintentar, incluso tras reinicio. | Unitario + store nuevo; evento durable `authentication_rejected`/`signature_invalid`; `approve` posterior con el mismo token denegado. |
+| AC-012b | Un desafío nuevo, emitido por acción administrativa explícita tras la invalidación, funciona; el anterior sigue denegado y la solicitud/alcance siguen sin aprobación automática. | Unitario + store nuevo; token anterior rechazado; evento `challenge_reissued`; scope/fingerprint sin cambios. |
+| AC-012c | Dos intentos concurrentes con el mismo desafío producen como máximo un éxito; un fallo definitivo no puede convivir con una aprobación. | Multiproceso con `fork`; exactamente 0 o 1 grant, nunca 2; sin `APPROVED` por el intento fallido. |
 | AC-012d | Un intento con token incorrecto no consume el desafío válido. | Unitario; el token correcto sigue funcionando si no hubo fallo autenticado. |
+| AC-012e | Un timeout, error de red, `5xx`, indisponibilidad o rate limit sin respuesta definitiva no consume ni invalida el desafío, no aprueba, deja evidencia y permite un reintento acotado dentro de la vigencia. | Proveedor simulado que agota el tiempo/falla; el mismo desafío sigue activo; `SETUP_INCOMPLETE` separado; no hay grant ni `APPROVED`. |
+| AC-012f | `SETUP_INCOMPLETE`/proveedor no configurado no consume el desafío ni se clasifica como rechazo de identidad. | Prueba de configuración; `challenge_used=false`; estado de setup; sin aprobación. |
+| AC-012g | Un `state`/sesión/PKCE/fingerprint/scope divergente tras la posesión se trata como rechazo definitivo de binding en la política recomendada: no aprueba, invalida el desafío y no permite reutilizarlo. | Unitario por cada binding; evento `binding_rejected`; token anterior rechazado; decisión D-02 registrada. |
+| AC-012h | El firmante no disponible antes de producir firma se trata como error técnico, no como rechazo de identidad: no aprueba, no consume el desafío y no se etiqueta `authentication_rejected`. | Inyección de error del firmante; desafío activo; sin grant; reintento permitido sólo si la política lo autoriza. |
 | AC-013a | Si el proceso muere después de la intención y antes del resultado, al reiniciar no hay `HEALTHY`, no se conceden nuevas operaciones y no se reejecuta el efecto. | Subproceso con `os._exit(9)` en cada ventana; `valid=false`/salud bloqueada; archivo y journal preservados. |
-| AC-013b | Una intención huérfana no puede limpiarse con una reconciliación genérica; exige evidencia ligada a la operación. | Intento de `reconcile` sin resolución: denegado; con evidencia: evento correlacionado y salud sólo entonces. |
+| AC-013b | Una intención huérfana no puede limpiarse con una reconciliación genérica; exige un mecanismo autorizado con identidad humana reautenticada y evidencia ligada a la operación. Si no existe, permanece bloqueada y `reconcile` no la resuelve. | Intento de `reconcile` sin resolución: denegado/no aplicable; prueba de que limpiar auditoría incompleta no borra la huérfana; con mecanismo autorizado y evidencia: evento correlacionado y salud sólo entonces. |
 | AC-013c | Una caída antes de la intención no deja efecto; una caída después del resultado conserva el resultado y no duplica la operación. | Matriz de puntos de caída; hashes y eventos antes/después. |
 | AC-014a | Un fallo de `fsync` de directorio en `create_file`, `modify_file`, `overwrite_file` o `delete_file` no produce `DURABILITY_CONFIRMED` ni un éxito de API. | Inyección de `OSError` por operación; `EXECUTED_NOT_DURABLE`/`INDETERMINATE`; bloqueo. |
 | AC-014b | Un fallo de `fsync` de archivo antes del rename no deja un target alterado; si la limpieza falla, el resultado es indeterminado y bloquea. | Inyección en archivo/temporal; target y temp inspeccionados; sin éxito. |
 | AC-014c | Tras un fallo de durabilidad, un reinicio no devuelve `HEALTHY` ni permite operaciones sin reconciliación. | Store nuevo + Authority nueva; salud bloqueada persistente. |
-| AC-015a | Una migración con grant sin evento `approval`, evento de otra solicitud o firma inválida no inserta grants ni registra `completed`; los originales no cambian. | Fixtures de migración; `MigrationError`; 0 grants; hashes de archivos iguales. |
+| AC-015a | Una migración con grant sin evento `approval`, evento de otra solicitud, campos divergentes o firma inválida no inserta ese grant como activo ni registra un `completed` incondicional; según D-04, aborta o lo marca en cuarentena no autorizable, y los originales no cambian. | Fixtures de migración; `MigrationError` o estado `quarantined`; 0 grants activos; hashes de archivos iguales. |
 | AC-015b | Una migración válida conserva grants, solicitudes, eventos e idempotencia, y una segunda ejecución no duplica. | Fixture válido; `already_migrated`; conteos y hashes. |
 | AC-015c | Un store existente con grant no correlacionado no autoriza ese grant y `verify-storage` lo reporta. | Base manipulada/fixture; `get_grant` o autorización denegada; `ok=false`. |
-| AC-016a | Solicitud manipulada, grant manipulado, firma inválida, evento faltante o salud bloqueada producen `ok=false`/`valid=false` y exit no cero. | Matriz de manipulación; `chain_valid` puede seguir true; `store_valid=false`. |
-| AC-016b | Un store íntegro y saludable produce `ok=true`, `chain_valid=true`, `store_valid=true`, salud `HEALTHY`, exit 0, sin mutaciones. | Snapshot antes/después; SQLite trace o hash lógico; salida JSON. |
-| AC-016c | Un store inexistente, inaccesible o sin trust store no se crea ni se declara válido. | CLI sobre ruta temporal; exit no cero; sin archivo nuevo. |
-| AC-017 | No se introduce ningún estado oficial nuevo y los siete estados documentales siguen intactos. | Inspección de esquema/validadores + prueba de estados. |
-| AC-018 | La corrección no implementa OIDC ni habilita producción; el camino de producción sigue denegando por `SETUP_INCOMPLETE`. | Prueba de estado/CLI; revisión de diff; sin callback/UI. |
+| AC-015d | **Fallback anti-bypass:** con el store canónico sin el grant, un grant legacy no correlacionado, de otra solicitud o marcado rechazado/cuarentenado no autoriza por `_load_bundle`/`approvals/*.json`; la ruta devuelve denegación y no crea eventos. | Prueba negativa que coloca un archivo legacy y un store sin grant; `authorize`/`verify_approval` denegados; `ok=false`; original intacto. |
+| AC-015e | Si D-04 elige cuarentena, los grants en cuarentena se preservan con su hash/fuente, no se insertan como activos, no autorizan y `verify-storage` los reporta; no se borran ni se “reparan”. | Fixture con grant no correlacionado; registro de cuarentena; `counts.quarantined_grants=1`; autorización denegada; bytes originales iguales. |
+| AC-016a | Solicitud manipulada, grant manipulado, firma inválida, evento faltante, grant en cuarentena, intención huérfana, migración inconsistente o salud bloqueada producen `ok=false`/`valid=false` y exit `2`. | Matriz de manipulación; `chain_valid` puede seguir true; `store_valid=false`; `valid` igual a `ok`. |
+| AC-016b | Un store íntegro y saludable produce `ok=true`, `chain_valid=true`, `store_valid=true`, `health=HEALTHY`, `valid=true`, exit 0, sin mutaciones. | Snapshot antes/después; hash lógico o traza SQLite; salida JSON completa. |
+| AC-016c | Un store inexistente, inaccesible o sin trust store no se crea ni se declara válido; el resultado es fail-closed y no muta nada. | CLI sobre ruta temporal; exit 2; sin archivo nuevo; salida con error. |
+| AC-016d | `valid` es alias exacto de `ok` y nunca refleja sólo la cadena; un consumidor que ignora `store_valid` no recibe `valid=true` ante un store inválido. | Caso con cadena válida y grant no correlacionado: `chain_valid=true`, `store_valid=false`, `ok=false`, `valid=false`, exit 2. |
+| AC-017 | No se introduce ningún estado oficial nuevo y los siete estados documentales siguen exactamente intactos; la prueba verifica el conjunto y las transiciones permitidas, no sólo una lista textual. | **TST-09** `test_document_state_contract_is_unchanged` en `tests/test_state_contract.py`: compara el conjunto con los siete estados, comprueba que un estado desconocido es rechazado y que la SPEC-ARCH-001 no fue modificada; ejecutar antes/después del cambio. |
+| AC-018 | La corrección no implementa OIDC ni habilita producción; el camino de producción sigue denegando por `SETUP_INCOMPLETE`; no se acepta un token directo como login. | Prueba de estado/CLI; revisión de diff; sin callback/UI; `SETUP_INCOMPLETE` sigue siendo el resultado de producción. |
 
 ## 9. Escenarios de fallo
 
 | Escenario | Estado esperado | Prohibido |
 |---|---|---|
-| Fallo de autenticación/firma con token válido | Desafío invalidado, solicitud no aprobada, evento durable, autoridad sana si la invalidación se persistió. | Reutilizar el token; `APPROVED`; grant; alegar éxito. |
-| Fallo de `state`/sesión/scope/revisión con token válido | Denegación; la política de consumo queda en D-02. | Aprobar sin autenticación o ignorar el fallo. |
+| Rechazo definitivo de autenticación/firma con token válido | Desafío invalidado, solicitud no aprobada, evento durable, autoridad sana si la invalidación se persistió. | Reutilizar el token; `APPROVED`; grant; alegar éxito. |
+| Fallo de `state`/sesión/scope/revisión con token válido | Rechazo definitivo de binding recomendado (D-02-b): desafío invalidado, sin aprobación. | Aprobar sin autenticación o ignorar el fallo. |
+| `SETUP_INCOMPLETE`/configuración incompleta | No consume el desafío, no aprueba; sigue el bloqueo de producción. | Clasificarlo como rechazo de identidad; consumir el token. |
+| Timeout/red/`5xx`/proveedor no disponible | No consume ni invalida; backoff y reintento acotado; sin aprobación. | Invalidación permanente automática; aprobar por error técnico. |
+| Firmante no disponible antes de firmar | Error técnico, no rechazo de identidad; sin aprobación ni consumo. | Declarar firma rechazada; reutilizar para aprobar. |
 | Caída antes de la intención | Sin efecto; al reiniciar no hay huérfana. | Crear archivo sin journal. |
 | Caída después de la intención y antes del efecto | Intención huérfana; salud bloqueada; sin nuevas operaciones. | Reejecutar o borrar la intención automáticamente. |
 | Caída después del efecto y antes del resultado | Intención huérfana; archivo puede existir; bloqueo y reconciliación. | Declarar `HEALTHY`; repetir la escritura; borrar el archivo. |
 | `fsync` de archivo falla antes del rename | Limpieza segura o indeterminado; sin éxito. | `DURABILITY_CONFIRMED`; target alterado silenciosamente. |
 | `fsync` de directorio falla después de rename/unlink | `EXECUTED_NOT_DURABLE`/`INDETERMINATE`; bloqueo. | Éxito; `allowed` interpretado como durable. |
 | Disco lleno/IO error durante journal o resultado | Fallo cerrado; sin efecto si falta intención; bloqueo si el resultado es dudoso. | Continuar con salud sana o auto-reparar. |
-| Migración con grant sin evento correlacionado | `MigrationError`; rollback; sin `completed`; originales intactos. | Insertar grant; marcar éxito; borrar fuente. |
-| Store manipulado o salud bloqueada | `ok=false`; `store_valid=false`; exit no cero. | `valid=True`; `HEALTHY`; reparación automática. |
+| Migración con grant sin evento correlacionado | Rechazo o cuarentena no autorizable según D-04; sin grant activo; originales intactos. | Insertar grant; marcar `completed`; borrar fuente. |
+| Fallback legacy con grant no correlacionado | Denegación; sin evento nuevo; no autoriza. | Devolver el grant sólo porque el store no lo tiene; inventar correlación. |
+| Store manipulado o salud bloqueada | `ok=false`; `store_valid=false`; `valid=false`; exit 2. | `valid=True`; `HEALTHY`; reparación automática. |
 | Reinicio tras cualquier fallo anterior | Bloqueo persistente hasta reconciliación humana. | Reinicio “limpio” que borra la marca. |
 
 ## 10. Estrategia de recuperación
@@ -291,10 +368,12 @@ No se introduce un estado documental, de solicitud, de autenticación, de autori
 
 ### 10.2 Desafío invalidado (AUD-01)
 
-- El token anterior permanece inutilizable para siempre.
-- Se emite un desafío nuevo sólo por acción administrativa explícita y con state/session/nonce nuevos; el desafío anterior no se “resetea”.
+- El token anterior permanece inutilizable para siempre tras un rechazo definitivo; no se “resetea”.
+- Se emite un desafío nuevo sólo por acción administrativa explícita y con state/session/nonce nuevos; la elección entre misma solicitud y solicitud nueva es D-03.
 - La solicitud puede seguir pendiente o registrar `AUTH_FAILED` según D-03; en ningún caso pasa a `APPROVED` sin un nuevo intento autenticado y un commit completo.
+- Un fallo transitorio no invalida el token; se registra, se aplica backoff y se permite reintento acotado. Si expira la vigencia, se requiere reemisión administrativa y el resultado no se llama rechazo de identidad.
 - Si la invalidación no pudo persistirse, la autoridad debe bloquearse, no continuar con un token potencialmente reutilizable.
+- `SETUP_INCOMPLETE` no se trata como intento de identidad: el desafío queda intacto y producción sigue bloqueada.
 
 ### 10.3 Operación huérfana o no durable (AUD-02/AUD-03)
 
@@ -306,12 +385,15 @@ No se introduce un estado documental, de solicitud, de autenticación, de autori
 6. Registrar reconciliación con identidad admin, reautenticación y nota; sólo entonces volver a `HEALTHY` si no quedan huérfanas.
 7. Ejecutar `--verify-storage` y reiniciar; comprobar que no se repitió el efecto.
 
+**Límite OBS-03.** El mecanismo existente `reconcile` exige UID administrador y reautenticación, pero en producción `_approval_event` sigue denegando por `SETUP_INCOMPLETE` y la prueba sólo usa identidad simulada. Además, `reconcile` limpia una auditoría incompleta; no resuelve por sí mismo una intención huérfana. Hasta que exista un mecanismo autorizado que ligue identidad humana, evidencia y operación, la resolución de huérfanas queda bloqueada. Un agente no puede reconciliar, aprobar ni firmar por sí mismo.
+
 ### 10.4 Migración fallida (AUD-04)
 
 - La transacción se revierte completa; no se conserva un `meta` de éxito ni grants parciales.
 - Los archivos originales permanecen intactos; se corrige la evidencia fuente o se aplica la política D-04.
 - Se repite la migración sólo después de que la correlación sea verificable; la idempotencia debe impedir duplicados.
 - Si la base ya contiene un grant no correlacionado, se bloquea su autorización y se decide entre re-aprobación, cuarentena o rechazo conforme a D-04.
+- El fallback legacy no puede reintroducir un grant rechazado o cuarentenado: `_load_bundle` debe denegar cuando la correlación no verifica, aunque el archivo exista fuera del store. La eliminación general del fallback es AUD-06.
 
 ### 10.5 Verificación fallida (AUD-05)
 
@@ -325,32 +407,36 @@ No se introduce un estado documental, de solicitud, de autenticación, de autori
 - **Esquema actual:** `schema_version=1`. Cualquier tabla/columna nueva para journal, correlación o resultados exige una versión nueva y una migración explícita, idempotente y transaccional; no se debe abrir una base antigua como si ya tuviera la nueva estructura.
 - **Datos existentes:** no se borran ni reescriben solicitudes, grants, eventos, `meta`, archivos legacy, WAL/SHM. Una migración fallida no deja cambios parciales.
 - **Grants históricos:** la firma sigue siendo verificable, pero la autorización exige la correlación de RF-015. Un grant no correlacionado no se considera autorizable; la política de re-aprobación/cuarentena es D-04.
-- **Registros de migración:** los registros `completed` existentes deben poder auditarse; si no cumplen la nueva verificación, se reportan como no válidos y no se “arreglan” silenciosamente.
-- **CLI:** `valid` no puede seguir significando “sólo cadena” cuando se usa para decidir éxito. Se preservan los campos útiles, se agregan `chain_valid`, `store_valid` y `ok`, y el exit code pasa a ser fail-closed. La forma exacta es D-05.
+- **Fallback legacy:** `_load_bundle` puede seguir leyendo el archivo histórico sólo como compatibilidad de lectura y sólo con paridad de verificación RF-015.7–RF-015.9. Si el grant falta en el store canónico, está en cuarentena, no tiene evento correlacionado o pertenece a otro contexto, la ruta debe denegar. No se convierte en una segunda fuente de autoridad. La eliminación/rediseño general es AUD-06.
+- **Registros de migración:** los registros `completed` existentes deben poder auditarse; si no cumplen la nueva verificación, se reportan como no válidos y no se “arreglan” silenciosamente. Un registro que no distingue grants activos de cuarentenados no puede declararse íntegro.
+- **CLI:** `valid` no puede seguir significando “sólo cadena” cuando se usa para decidir éxito. `valid` se convierte en alias de `ok`; se agregan `chain_valid`, `store_valid`, `checks`, `errors` y `format_version`, y el exit code es fail-closed (`0` sólo con `ok=true`, `2` en fallo). La forma exacta es D-05.
 - **Contrato de gate:** se agregan campos de durabilidad y journal; los clientes existentes que sólo miran `allowed` no deben interpretarlo como éxito durable. La compatibilidad de protocolo/versionado es D-05.
 - **Instalador:** la ruta `store_path` existente se conserva. La corrección no exige cambiar usuarios, grupos, claves, socket ni configuración; sólo verificar que el instalador no invoque una verificación con semántica antigua. Cualquier cambio de instalador queda fuera de esta misión.
 - **SPEC-ARCH-001:** no se modifica. Sus siete estados y requisitos siguen siendo el baseline; esta SPEC sólo aclara resultados para los P1.
 
 ## 12. Migraciones necesarias
 
-1. **Esquema de store:** evaluar una versión 2 para journal/resultados y cualquier metadato de correlación. La migración debe ser forward-only, con backup verificado, transacción única, validación de `schema_version` y prueba de rollback operativo que preserve datos.
-2. **Backfill de evidencia:** no se deben inventar eventos `approval` para grants históricos. Si una intención/resultado histórico no puede correlacionarse, se reporta y se bloquea; no se fabrica un resultado.
-3. **Correlación legacy:** la migración existente debe verificar eventos antes de insertar grants y abortar todo el conjunto si falla; no se acepta una migración parcial.
+1. **Esquema de store:** la recomendación D-06 es una versión 2 con journal/resultados en el mismo store SQLite y metadatos de correlación/cuarentena. La migración debe ser forward-only, con backup verificado, transacción única, validación de `schema_version` y prueba de rollback operativo que preserve datos. La ubicación final sigue pendiente de D-06.
+2. **Backfill de evidencia:** no se deben inventar eventos `approval` para grants históricos. Si una intención/resultado histórico no puede correlacionarse, se reporta y se bloquea o se cuarentena según D-04; no se fabrica un resultado.
+3. **Correlación legacy:** la migración existente debe verificar eventos antes de insertar grants y no puede dejar un grant no correlacionado como activo. La elección entre aborto total y cuarentena es D-04; en ambos casos los originales se preservan.
 4. **Salud:** una base migrada con huérfanas o grants no correlacionados debe quedar bloqueada, no `HEALTHY`; la migración no puede limpiar la salud.
-5. **CLI/operación:** documentar la nueva semántica de `--verify-storage` y `--migrate`, incluyendo exit codes y campos de salida; no se requiere un comando nuevo para esta SPEC.
-6. **Reversibilidad:** si se revierte el software, no se debe abrir la base nueva con un lector que ignore campos de seguridad y la declare válida. La política de downgrade debe ser explícita y fail-closed.
+5. **Fallback:** el ajuste mínimo debe aplicarse también a la lectura legacy; no se permite que un grant rechazado/cuarentenado vuelva por el archivo. La remediación completa de AUD-06 no se incluye.
+6. **CLI/operación:** documentar la nueva semántica de `--verify-storage` y `--migrate`, incluyendo exit codes y campos de salida; no se requiere un comando nuevo para esta SPEC.
+7. **Reversibilidad:** si se revierte el software, no se debe abrir la base nueva con un lector que ignore campos de seguridad y la declare válida. La política de downgrade debe ser explícita y fail-closed.
 
 ## 13. Pruebas obligatorias
 
 ### 13.1 Unitarias
 
-- Invalidación de desafío tras un fallo real de autenticación/firma (identidad no confirmada o proveedor que deniega); no aprobación; token anterior rechazado; token nuevo aceptado; token incorrecto no consume. Un `SETUP_INCOMPLETE` se prueba por separado y no consume.
-- Carrera lógica de dos intentos; CAS; exactamente un éxito como máximo.
+- Invalidación de desafío tras un rechazo definitivo real (identidad/proveedor que deniega o firma producida no verificable); no aprobación; token anterior rechazado; token nuevo aceptado; token incorrecto no consume. `SETUP_INCOMPLETE`, timeout/red/`5xx`, firmante no disponible y binding divergente se prueban por separado con el resultado de la tabla RF-012.
+- Carrera lógica de dos intentos; CAS; exactamente un éxito como máximo; un fallo definitivo no puede coexistir con una aprobación.
 - Journal: intención sin resultado, resultado sin intención (si se permite detectarlo), duplicado de operación, resolución humana.
 - `safe_fs`: fallo de `fsync` de archivo y de directorio en las cuatro operaciones; limpieza; estados de durabilidad.
-- Migración: grant sin evento, evento de otra solicitud, evento con campos divergentes, firma inválida, cadena válida, idempotencia, rollback.
-- Verificación: solicitud manipulada, grant manipulado, firma inválida, evento faltante, salud bloqueada, migración inconsistente, store válido.
-- Estados: los siete documentales intactos; ningún estado oficial nuevo.
+- Migración: grant sin evento, evento de otra solicitud, evento con campos divergentes, firma inválida, cadena válida, idempotencia, rollback y cuarentena si D-04 la elige.
+- Fallback: grant no correlacionado, de otra solicitud o cuarentenado presente sólo en `approvals/*.json`; `_load_bundle`/autorización denegados; sin eventos nuevos; original intacto.
+- Verificación: solicitud manipulada, grant manipulado, firma inválida, evento faltante, salud bloqueada, migración inconsistente, grant en cuarentena, store válido; `valid == ok` y exit codes.
+- Estados: los siete documentales intactos; ningún estado oficial nuevo; `test_document_state_contract_is_unchanged` (TST-09).
+- Reconciliación: `reconcile` sin mecanismo autorizado no resuelve huérfanas; identidad simulada no se acepta como demostración de producción (OBS-03).
 
 ### 13.2 Multiproceso y reinicio
 
@@ -391,7 +477,8 @@ No se introduce un estado documental, de solicitud, de autenticación, de autori
 | `SQLiteAuthorityStore` | Probable esquema v2/journal, CAS de desafío, correlación, verificación integral y migración. | No se toca el archivo en esta misión. |
 | `ImplementationGate` | Intención durable, resultado, recuperación, contrato de durabilidad y reconciliación. | No se cambia el gate ahora. |
 | `safe_fs` | Propagar errores de fsync y devolver evidencia de durabilidad; no limpiar silenciosamente. | No se cambia ahora. |
-| Migración histórica | Correlación obligatoria, aborto todo-o-nada, grants no verificables bloqueados. | No se reescriben fuentes ni bases. |
+| Migración histórica | Correlación obligatoria; aborto o cuarentena no autorizable según D-04; grants no verificables bloqueados. | No se reescriben fuentes ni bases. |
+| Fallback legacy | Paridad de verificación RF-015.7–RF-015.9; no autoriza grants no correlacionados/cuarentenados. | No se elimina el fallback ni se resuelve AUD-06. |
 | CLI | `--verify-storage` fail-closed, campos separados y exit code; `--migrate` reporta fallo. | No se ejecuta ni se cambia el CLI. |
 | Instalador | Sin cambio funcional obligatorio; verificar que no dependa del `valid` ambiguo. | No se modifica. |
 | Contratos/adaptadores | Nuevos campos de durabilidad/journal y semántica fail-closed; evaluar versión. | No se implementa adaptador. |
@@ -414,15 +501,16 @@ No se introduce un estado documental, de solicitud, de autenticación, de autori
 
 | AUD | RF | AC | Pruebas | Decisión pendiente |
 |---|---|---|---|---|
-| AUD-01 | RF-012 | AC-012a…d | Unitarias, carrera, reinicio | D-02, D-03 |
-| AUD-02 | RF-013 | AC-013a…c | Journal, crash, multiproceso, reinicio | D-06 |
-| AUD-03 | RF-014 | AC-014a…c | Fault injection, cuatro operaciones, reinicio | D-05 (contrato de resultado) |
-| AUD-04 | RF-015 | AC-015a…c | Migración, firmas, eventos, originales | D-04 |
-| AUD-05 | RF-016 | AC-016a…c | Matriz de manipulación, CLI, read-only | D-05 |
+| AUD-01 | RF-012 | AC-012a…h | Unitarias, transitorios, binding, carrera, reinicio | D-02, D-03 |
+| AUD-02 | RF-013 | AC-013a…c | Journal, crash, multiproceso, reinicio | D-06, D-07 |
+| AUD-03 | RF-014 | AC-014a…c | Fault injection, cuatro operaciones, reinicio | D-06 (durabilidad/journal) |
+| AUD-04 | RF-015 | AC-015a…e | Migración, firmas, eventos, fallback, originales | D-04 |
+| AUD-05 | RF-016 | AC-016a…d | Matriz de manipulación, CLI, read-only | D-05 |
 
 ### 15.3 Fuera de esta trazabilidad
 
-- AUD-06 a AUD-17 no se corrigen aquí. En particular, AUD-06 (fallback legacy), AUD-07 (truncación sin ancla), AUD-08 (migración concurrente), AUD-09 (replay/OIDC) y AUD-15 (docs sobre `INDETERMINATE`) siguen abiertos o pendientes de su propia decisión.
+- AUD-06 a AUD-17 no se corrigen aquí. En particular, AUD-06 (fallback legacy) queda cubierto sólo por el ajuste mínimo anti-bypass RF-015.7–RF-015.9; su eliminación/rediseño general sigue fuera de alcance. AUD-07 (truncación sin ancla), AUD-08 (migración concurrente), AUD-09 (replay/OIDC) y AUD-15 (docs sobre `INDETERMINATE`) siguen abiertos.
+- **OBS-01** queda recogida en RF-015.7–RF-015.9 y AC-015d; **OBS-02** en RF-012.9–RF-012.10 y AC-012e/f/h; **OBS-03** en RF-013.11–RF-013.12 y §10.3; **OBS-04** en TST-09/AC-017 y en la corrección de dependencia IMP-03 del PLAN.
 - SA-014 no se declara cumplido por esta SPEC; sólo se definen las pruebas que la corrección debe aportar.
 - La aprobación de SPEC-ARCH-001 no se infiere de este documento. **D-01.**
 
@@ -438,28 +526,32 @@ No se introduce un estado documental, de solicitud, de autenticación, de autori
 8. **Los estados oficiales no se amplían.** Cualquier necesidad de un estado nuevo debe justificarse y aprobarse por separado; no se introduce aquí.
 9. **OIDC y producción siguen bloqueados.** Ninguna corrección de estos P1 habilita el flujo de aprobación humana real.
 10. **Los P2/P3 siguen abiertos** y pueden afectar la garantía global aunque estos P1 se corrijan.
+11. **El fallback legacy sigue existiendo** como compatibilidad de lectura. La paridad de verificación cierra el bypass de AUD-04, pero no elimina la fuente alternativa ni resuelve AUD-06; una lectura fuera del store puede seguir siendo un riesgo de diseño.
+12. **La reconciliación de huérfanas no tiene un mecanismo de producción demostrado.** Hasta que exista, el bloqueo puede ser operativamente permanente; no se debe simular una aprobación humana.
+13. **La compatibilidad de `valid` exige migrar consumidores.** Aunque el alias sea fail-closed, un consumidor que no distinga `chain_valid` puede seguir interpretando mal un resultado parcial; D-05 debe aprobar el contrato y su versión.
 
 ## 17. Decisiones pendientes de aprobación humana
 
 | ID | Decisión | Opciones | Efecto | Bloquea |
 |---|---|---|---|---|
 | D-01 | Autoridad formal de SPEC-ARCH-001 | (a) aprobar/hash y actualizar su estado; (b) mantener DRAFT y no declarar cobertura. | Determina si existe baseline normativo. | Aprobación de esta SPEC. |
-| D-02 | Disparador de invalidación | (a) sólo autenticación/firma; (b) todo fallo posterior a la prueba de posesión (state/sesión/scope/revisión), excluyendo `SETUP_INCOMPLETE`/configuración; (c) rotación automática. | Seguridad vs. fricción/DoS. | RF-012 completo. |
-| D-03 | Reemisión del desafío | (a) nuevo desafío sobre la misma solicitud; (b) nueva solicitud obligatoria; (c) `AUTH_FAILED` + nueva solicitud. | UX y estado de la solicitud. | RF-012.5/RF-012.6. |
-| D-04 | Grants históricos no correlacionados | (a) rechazar toda migración; (b) cuarentenar y bloquear; (c) exigir re-aprobación; (d) aceptar con marca legacy (no recomendada). | Disponibilidad histórica vs. trazabilidad. | RF-015/migración. |
-| D-05 | Contrato de verificación y compatibilidad | (a) `valid` = store íntegro, `chain_valid` separado; (b) mantener `valid` de cadena y agregar `ok`; (c) nueva versión de protocolo. | Consumidores CLI/adaptadores. | RF-016/AC-016. |
-| D-06 | Journal y recuperación | (a) journal en el store SQLite; (b) journal separado con atomicidad equivalente; (c) reutilizar eventos de auditoría enriquecidos. | Esquema, migración y recuperación. | RF-013. |
-| D-07 | Datos existentes con huérfanas/no correlacionados | (a) bloquear arranque; (b) arrancar en modo sólo lectura; (c) cuarentena con operador. | Disponibilidad y recuperación. | Implementación. |
-| D-08 | Alcance de P2/P3 | (a) estrictamente P1; (b) incluir AUD-06/AUD-15 por dependencia; (c) otro. | Evita ampliar la misión silenciosamente. | Plan final. |
+| D-02 | Disparador de invalidación | (a) sólo autenticación/firma; (b) todo rechazo definitivo posterior a la posesión, incluido binding/revisión (recomendada); (c) rotación automática (no recomendada). | Seguridad vs. fricción/DoS; los fallos transitorios no invalidan. | RF-012 completo. |
+| D-03 | Reemisión del desafío | (a) misma solicitud con desafío nuevo; (b) nueva solicitud obligatoria; (c) ambas con condiciones (recomendada: (a) por defecto, (b) si cambia alcance/expira). | UX, estado y auditoría. | RF-012.6. |
+| D-04 | Grants históricos no correlacionados | (a) rechazar toda la migración; (b) cuarentenar y bloquear; (c) re-aprobación; (d) aceptar como legacy (no recomendada). | Disponibilidad histórica vs. trazabilidad. | RF-015/migración. |
+| D-05 | Contrato de verificación y compatibilidad | (a) `valid=ok`, campos separados (recomendada); (b) `valid` de cadena + `ok` (no recomendada); (c) nueva versión de protocolo. | Consumidores CLI/adaptadores. | RF-016/AC-016. |
+| D-06 | Journal y recuperación | (a) journal en el store SQLite; (b) journal separado; (c) eventos de auditoría enriquecidos. | Esquema, migración y recuperación; no hay atomicidad SQLite/filesystem. | RF-013. |
+| D-07 | Datos existentes con anomalías | (a) bloquear autorizaciones y permitir sólo lectura/diagnóstico (recomendada); (b) bloqueo total; (c) cuarentena por registro. | Disponibilidad y recuperación. | Implementación. |
+| D-08 | Alcance de P2/P3 | (a) P1 + ajuste mínimo anti-bypass (recomendada); (b) incluir AUD-06/AUD-15; (c) otro. | Evita ampliar la misión silenciosamente. | Plan final. |
 
-Recomendación preliminar, sujeta a aprobación: D-02(a) como mínimo obligatorio y evaluar (b); D-03(a) con token anterior permanentemente muerto; D-04(b)/(c) antes que aceptar evidencia no correlacionada; D-05(a) por fail-closed; D-06(a) por atomicidad y menor superficie; D-07(a) para no servir datos dudosos; D-08(a) para mantener el alcance.
+Ninguna opción está aprobada. El análisis completo, alternativas, consecuencias y recomendaciones está en `DECISIONS-ARCH-002-SECURITY-REMEDIATION.md`; todas las decisiones permanecen `PENDING USER DECISION`.
 
 ## 18. Condición de aprobación
 
 Esta SPEC queda en **DRAFT**. No se implementa, no se modifica ningún componente y no se declara producción habilitada. La aprobación debe ser explícita sobre:
 
 1. el texto, versión y hash de esta SPEC;
-2. las decisiones D-01 a D-08 que correspondan;
-3. el alcance estricto de los cinco P1, sin OIDC ni correcciones P2/P3 no autorizadas.
+2. las decisiones D-01 a D-08 que correspondan, con el estado registrado en `DECISIONS-ARCH-002-SECURITY-REMEDIATION.md`;
+3. el alcance estricto de los cinco P1, más el ajuste mínimo anti-bypass del fallback, sin OIDC ni correcciones P2/P3 no autorizadas;
+4. el contrato de verificación y exit codes de D-05, y la política de fallos transitorios de D-02.
 
 Hasta entonces, las garantías descritas son requisitos propuestos, no comportamiento demostrado.
