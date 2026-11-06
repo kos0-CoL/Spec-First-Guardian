@@ -140,6 +140,7 @@ class ImplementationGate:
         if audit_path is None:
             raise PathSafetyError("el gate exige un audit log explicito")
         self.audit = audit_chain.AuditChain(audit_path)
+        self._audit_unavailable = ""
 
     # -- auditoria --------------------------------------------------------
     def _record(self, stage: str, request: dict, decision: Decision) -> dict | None:
@@ -172,8 +173,10 @@ class ImplementationGate:
                 "fallo al registrar el resultado de la operacion",
                 {"operation": decision.operation, "path": decision.path, "detail": detail},
             )
-        except OSError:
-            pass
+        except OSError as error:
+            # Cannot persist the marker: poison this gate instance so it cannot
+            # continue granting permissions in this process.
+            self._audit_unavailable = str(error)
 
     # -- autorizacion -----------------------------------------------------
     def authorize(self, request: dict) -> Decision:
@@ -181,8 +184,9 @@ class ImplementationGate:
         if not isinstance(request, dict):
             decision.reasons.append("contexto de operacion ausente")
             return decision
-        if self.audit.is_blocked():
-            decision.reasons.append("auditoria incompleta: operaciones bloqueadas hasta reconciliar")
+        audit_valid, audit_reason, _ = self.audit.verify()
+        if self._audit_unavailable or self.audit.is_blocked() or not audit_valid:
+            decision.reasons.append(f"auditoria no saludable: {audit_reason}; operaciones bloqueadas hasta reconciliar")
             return decision
         missing = [name for name in REQUIRED_CONTEXT_FIELDS if not str(request.get(name) or "").strip()]
         if missing:

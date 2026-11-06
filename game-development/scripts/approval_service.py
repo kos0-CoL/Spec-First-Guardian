@@ -22,6 +22,7 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import secrets
 import json
 import logging
 import os
@@ -154,6 +155,7 @@ class HumanIdentity:
     audience: str | None = None
     authenticated_at: str | None = None
     expires_at: str | None = None
+    auth_time: str | None = None
 
     def valid_at(self, moment: datetime) -> bool:
         authenticated_at = _parse_iso(self.authenticated_at)
@@ -190,12 +192,15 @@ class OIDCIdentityProvider(IdentityProvider):
 
     is_simulated = False
 
-    def __init__(self, issuer: str | None = None, audience: str | None = None, jwks: dict | None = None, jwks_provider=None, clock_skew_seconds: int = 60) -> None:
+    def __init__(self, issuer: str | None = None, audience: str | None = None, jwks: dict | None = None, jwks_provider=None, clock_skew_seconds: int = 60, max_auth_age_seconds: int = 300) -> None:
         self.issuer = str(issuer or "").strip()
         self.audience = str(audience or "").strip()
         self._jwks = {str(kid): pem for kid, pem in (jwks or {}).items()}
         self._jwks_provider = jwks_provider
         self.clock_skew_seconds = int(clock_skew_seconds)
+        self.max_auth_age_seconds = int(max_auth_age_seconds)
+        self._consumed_nonces: set[str] = set()
+        self._consumed_token_hashes: set[str] = set()
 
     @property
     def configured(self) -> bool:
@@ -236,12 +241,29 @@ class OIDCIdentityProvider(IdentityProvider):
             claims = jwt.decode(
                 token,
                 key=key,
-                algorithms=["RS256", "RS384", "RS512", "ES256", "ES384", "EdDSA"],
+                algorithms=["RS256"],
                 audience=self.audience,
                 issuer=self.issuer,
-                options={"require": ["exp", "iat", "iss", "aud", "sub"]},
+                options={"require": ["exp", "iat", "iss", "aud", "sub", "nonce"]},
                 leeway=self.clock_skew_seconds,
             )
+            expected_nonce = str(approval_event.get("expected_nonce") or "")
+            nonce = str(claims.get("nonce") or "")
+            if not expected_nonce or not secrets.compare_digest(nonce, expected_nonce):
+                logger.warning("aprobacion denegada: nonce OIDC ausente o no coincide")
+                return None
+            token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+            if nonce in self._consumed_nonces or token_hash in self._consumed_token_hashes:
+                logger.warning("aprobacion denegada: token OIDC o nonce reutilizado")
+                return None
+            now = datetime.now(timezone.utc)
+            auth_time = claims.get("auth_time")
+            if auth_time is not None and now.timestamp() - int(auth_time) > self.max_auth_age_seconds + self.clock_skew_seconds:
+                logger.warning("aprobacion denegada: autenticacion demasiado antigua")
+                return None
+            # Consumed only after all cryptographic and claim validation succeeds.
+            self._consumed_nonces.add(nonce)
+            self._consumed_token_hashes.add(token_hash)
         except Exception as error:  # token invalido, caducado, emisor o audiencia incorrectos
             logger.warning("aprobacion denegada: token OIDC invalido (%s)", type(error).__name__)
             return None
@@ -252,6 +274,7 @@ class OIDCIdentityProvider(IdentityProvider):
             audience=str(claims.get("aud") or "") or None,
             authenticated_at=_iso(datetime.fromtimestamp(int(claims["iat"]), tz=timezone.utc)),
             expires_at=_iso(datetime.fromtimestamp(int(claims["exp"]), tz=timezone.utc)),
+            auth_time=_iso(datetime.fromtimestamp(int(claims.get("auth_time", claims["iat"])), tz=timezone.utc)),
         )
 
 
@@ -596,6 +619,7 @@ class ApprovalService:
                 "subject": identity.subject,
                 "audience": identity.audience,
                 "authenticated_at": identity.authenticated_at or _iso(moment),
+                "auth_time": identity.auth_time or identity.authenticated_at or _iso(moment),
             },
             "approved_at": _iso(moment),
             "expires_at": request["expires_at"],

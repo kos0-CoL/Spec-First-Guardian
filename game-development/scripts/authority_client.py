@@ -310,8 +310,16 @@ class AuthorityClient:
     def challenge(self, request_id: str) -> dict:
         return self.call("challenge", {"request_id": request_id})
 
-    def approve(self, request_id: str, challenge: str, *, id_token: str | None = None, test_identity: dict | None = None) -> dict:
+    def spec_page(self, request_id: str, fingerprint: str, offset: int = 0, limit: int = 4000) -> dict:
+        return self.call("spec_page", {"request_id": request_id, "fingerprint": fingerprint, "offset": offset, "limit": limit})
+
+    def approve(self, request_id: str, challenge: str, *, id_token: str | None = None, test_identity: dict | None = None, scope_hash: str | None = None, review_fingerprint: str | None = None, review_pages: int | None = None, oidc_nonce: str | None = None, oidc_state: str | None = None, session_id: str | None = None) -> dict:
         payload = {"request_id": request_id, "challenge": challenge}
+        for name, value in (("scope_hash", scope_hash), ("review_fingerprint", review_fingerprint), ("review_pages", review_pages), ("oidc_nonce", oidc_nonce), ("oidc_state", oidc_state), ("session_id", session_id)):
+            if value is not None:
+                payload[name] = value
+        if review_pages is not None:
+            payload["review_complete"] = True
         if id_token is not None:
             payload["id_token"] = id_token
         if test_identity is not None:

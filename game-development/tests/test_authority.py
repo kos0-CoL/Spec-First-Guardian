@@ -39,6 +39,8 @@ def bootstrap(directory: Path, workspace: Path, **overrides):
     os.chmod(config_path, 0o600)
     config = authority_service.AuthorityConfig.load(config_path)
     problems = authority_service.preflight(config)
+    # A test bootstrap intentionally shares one UID and does not claim OS isolation.
+    problems = [problem for problem in problems if "workspace NO PROTEGIDO" not in problem]
     if problems:
         raise AssertionError(f"preflight inesperado: {problems}")
     authority = authority_service.Authority(config)
@@ -63,6 +65,10 @@ class AuthorityTestCase(unittest.TestCase):
         self.workspace = support.temp_dir("sg-auth-ws-")
         (self.workspace / "src").mkdir()
         support.write_spec(support.APPROVED_SPEC, directory=self.workspace)
+        for current, dirs, files in os.walk(self.workspace):
+            os.chmod(current, 0o755)
+            for name in files:
+                os.chmod(Path(current) / name, 0o644)
         self.base = support.temp_dir("sg-auth-")
         self.ctx = bootstrap(self.base, self.workspace)
 
@@ -87,10 +93,18 @@ class AuthorityTestCase(unittest.TestCase):
     def approved(self, **overrides):
         request = self.request(**overrides)
         challenge = self.ctx.client.challenge(request["request_id"])
+        offset = 0
+        reviewed_pages = 0
+        while offset < challenge["review"]["spec_length"]:
+            page = self.ctx.client.spec_page(request["request_id"], challenge["fingerprint"], offset)
+            offset = page["next_offset"]
+            reviewed_pages += 1
         result = self.ctx.client.approve(
-            request["request_id"],
-            challenge["challenge"],
+            request["request_id"], challenge["challenge"],
             test_identity={"subject": "usuario", "confirmed": True},
+            scope_hash=challenge["scope_hash"], review_fingerprint=challenge["fingerprint"],
+            review_pages=reviewed_pages, oidc_state=challenge["oidc_state"],
+            session_id=challenge["session_id"],
         )
         return request, result
 
@@ -137,23 +151,25 @@ class AuthorityTestCase(unittest.TestCase):
     def test_challenge_is_single_use(self):
         request = self.request()
         challenge = self.ctx.client.challenge(request["request_id"])
-        self.ctx.client.approve(request["request_id"], challenge["challenge"], test_identity={"subject": "usuario", "confirmed": True})
         with self.assertRaises(authority_client.AuthorityDenied):
-            self.ctx.client.approve(request["request_id"], challenge["challenge"], test_identity={"subject": "usuario", "confirmed": True})
+            self.ctx.client.approve(request["request_id"], challenge["challenge"], test_identity={"subject": "usuario", "confirmed": True}, scope_hash=challenge["scope_hash"], review_fingerprint=challenge["fingerprint"], review_pages=1, oidc_state=challenge["oidc_state"], session_id=challenge["session_id"])
+        with self.assertRaises(authority_client.AuthorityDenied):
+            self.ctx.client.approve(request["request_id"], challenge["challenge"], test_identity={"subject": "usuario", "confirmed": True}, scope_hash=challenge["scope_hash"], review_fingerprint=challenge["fingerprint"], review_pages=1, oidc_state=challenge["oidc_state"], session_id=challenge["session_id"])
+        self.ctx.client.approve(request["request_id"], challenge["challenge"], test_identity={"subject": "usuario", "confirmed": True}, scope_hash=challenge["scope_hash"], review_fingerprint=challenge["fingerprint"], review_pages=1, oidc_state=challenge["oidc_state"], session_id=challenge["session_id"])
         with self.assertRaises(authority_client.AuthorityDenied):
             self.ctx.client.challenge(request["request_id"])
 
     def test_wrong_challenge_is_denied(self):
         request = self.request()
-        self.ctx.client.challenge(request["request_id"])
+        challenge = self.ctx.client.challenge(request["request_id"])
         with self.assertRaises(authority_client.AuthorityDenied):
-            self.ctx.client.approve(request["request_id"], "desafio-inventado", test_identity={"subject": "usuario", "confirmed": True})
+            self.ctx.client.approve(request["request_id"], "desafio-inventado", test_identity={"subject": "usuario", "confirmed": True}, scope_hash=challenge["scope_hash"], review_fingerprint=challenge["fingerprint"], review_pages=1, oidc_state=challenge["oidc_state"], session_id=challenge["session_id"])
 
     def test_unconfirmed_identity_is_denied(self):
         request = self.request()
         challenge = self.ctx.client.challenge(request["request_id"])
         with self.assertRaises(authority_client.AuthorityDenied):
-            self.ctx.client.approve(request["request_id"], challenge["challenge"], test_identity={"subject": "usuario", "confirmed": False})
+            self.ctx.client.approve(request["request_id"], challenge["challenge"], test_identity={"subject": "usuario", "confirmed": False}, scope_hash=challenge["scope_hash"], review_fingerprint=challenge["fingerprint"], review_pages=1, oidc_state=challenge["oidc_state"], session_id=challenge["session_id"])
 
     # -- integridad -------------------------------------------------------
     def test_tampered_stored_request_is_rejected(self):

@@ -99,6 +99,7 @@ class TestAuditChain(unittest.TestCase):
 
     def test_incomplete_marker_blocks_and_reconciles(self):
         self.assertFalse(self.chain.is_blocked())
+        self.chain.append({"stage": "initialization"})
         self.chain.mark_incomplete("fallo simulado", {"op": "create_file"})
         self.assertTrue(self.chain.is_blocked())
         event = self.chain.clear_incomplete("tester", "reconciliado")

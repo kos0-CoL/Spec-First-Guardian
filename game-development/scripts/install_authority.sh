@@ -23,6 +23,11 @@ LOG_DIR="/var/log/spec-guardian"
 PROJECT_ROOT=""
 AGENT_UID=""
 ADMIN_UID=""
+OIDC_ISSUER=""
+OIDC_AUDIENCE=""
+OIDC_JWKS_URL=""
+OIDC_CA_FILE=""
+APPROVER_SUBJECT=""
 PYTHON="${PYTHON:-python3}"
 
 while [ $# -gt 0 ]; do
@@ -30,6 +35,11 @@ while [ $# -gt 0 ]; do
     --project-root) PROJECT_ROOT="$2"; shift 2 ;;
     --agent-uid) AGENT_UID="$2"; shift 2 ;;
     --admin-uid) ADMIN_UID="$2"; shift 2 ;;
+    --oidc-issuer) OIDC_ISSUER="$2"; shift 2 ;;
+    --oidc-audience) OIDC_AUDIENCE="$2"; shift 2 ;;
+    --oidc-jwks-url) OIDC_JWKS_URL="$2"; shift 2 ;;
+    --oidc-ca-file) OIDC_CA_FILE="$2"; shift 2 ;;
+    --approver-subject) APPROVER_SUBJECT="$2"; shift 2 ;;
     --service-user) SERVICE_USER="$2"; SERVICE_GROUP="$2"; shift 2 ;;
     *) echo "Argumento no reconocido: $1" >&2; exit 2 ;;
   esac
@@ -39,10 +49,14 @@ if [ "$(id -u)" -ne 0 ]; then
   echo "ERROR: la instalacion exige root (crea usuarios y unidades de sistema)." >&2
   exit 2
 fi
-if [ -z "$PROJECT_ROOT" ] || [ -z "$AGENT_UID" ] || [ -z "$ADMIN_UID" ]; then
-  echo "ERROR: faltan --project-root, --agent-uid o --admin-uid." >&2
+if [ -z "$PROJECT_ROOT" ] || [ -z "$AGENT_UID" ] || [ -z "$ADMIN_UID" ] || [ -z "$OIDC_ISSUER" ] || [ -z "$OIDC_AUDIENCE" ] || [ -z "$OIDC_JWKS_URL" ] || [ -z "$APPROVER_SUBJECT" ]; then
+  echo "ERROR: se requieren --project-root, --agent-uid, --admin-uid, --oidc-issuer, --oidc-audience, --oidc-jwks-url y --approver-subject." >&2
   exit 2
 fi
+case "$OIDC_ISSUER $OIDC_JWKS_URL $OIDC_AUDIENCE $APPROVER_SUBJECT" in
+  *[Ee][Jj][Ee][Mm][Pp][Ll][Oo]*|*[Ee][Xx][Aa][Mm][Pp][Ll][Ee]*|*[Pp][Ll][Aa][Cc][Ee][Hh][Oo][Ll][Dd][Ee][Rr]*|*[Tt][Oo][Dd][Oo]*|*[Pp][Ee][Nn][Dd][Ii][Nn][Gg]*|*[Cc][Hh][Aa][Nn][Gg][Ee][Mm][Ee]*) echo "ERROR: no se permiten valores OIDC de ejemplo o pendientes." >&2; exit 2 ;;
+esac
+case "$OIDC_ISSUER $OIDC_JWKS_URL" in https://* ) ;; *) echo "ERROR: issuer y JWKS URL deben usar HTTPS." >&2; exit 2 ;; esac
 if [ ! -d "$PROJECT_ROOT" ]; then
   echo "ERROR: el proyecto no existe: $PROJECT_ROOT" >&2
   exit 2
@@ -156,10 +170,10 @@ chown root:root "$CONFIG_DIR/client.json"
 chmod 0644 "$CONFIG_DIR/client.json"
 
 if [ ! -f "$CONFIG_DIR/authority.json" ]; then
-  "$PYTHON" - "$CONFIG_DIR/authority.json" "$STATE_DIR" "$RUN_DIR" "$LOG_DIR" "$PROJECT_ROOT" "$AGENT_UID" "$ADMIN_UID" "$(getent group "$AGENT_GROUP" | cut -d: -f3)" <<'PY'
+  "$PYTHON" - "$CONFIG_DIR/authority.json" "$STATE_DIR" "$RUN_DIR" "$LOG_DIR" "$PROJECT_ROOT" "$AGENT_UID" "$ADMIN_UID" "$(getent group "$AGENT_GROUP" | cut -d: -f3)" "$OIDC_ISSUER" "$OIDC_AUDIENCE" "$OIDC_JWKS_URL" "$OIDC_CA_FILE" "$APPROVER_SUBJECT" <<'PY'
 import json, os, sys
 
-config_path, state, run, log, project, agent_uid, admin_uid, agent_gid = sys.argv[1:9]
+config_path, state, run, log, project, agent_uid, admin_uid, agent_gid, issuer, audience, jwks_url, ca_file, subject = sys.argv[1:14]
 config = {
     "environment": "production",
     "socket_path": f"{run}/authority.sock",
@@ -175,7 +189,7 @@ config = {
     "signing_key_file": f"{state}/keys/signing_key.pem",
     "key_id": "KEY-AUTHORITY-001",
     "issuer": "spec-guardian-authority",
-    "oidc": {"issuer": "https://IDP.EJEMPLO", "audience": "spec-guardian", "jwks_url": "https://IDP.EJEMPLO/.well-known/jwks.json"},
+    "oidc": {"issuer": issuer, "audience": audience, "jwks_url": jwks_url, "ca_file": ca_file or None, "expected_subject": subject, "max_auth_age_seconds": 300},
     "challenge_ttl_seconds": 180,
     "require_distinct_uid": True,
     "allow_simulated_identity": False,
@@ -209,13 +223,15 @@ WantedBy=multi-user.target
 UNIT
 
 # El workspace queda en solo lectura para el agente: propietario el servicio.
-"$PYTHON" "$PROJECT_ROOT/game-development/scripts/workspace_guard.py" protect "$PROJECT_ROOT" \
-  --service-uid "$SERVICE_UID" --service-gid "$(id -g "$SERVICE_USER")" --agent-uid "$AGENT_UID" >/dev/null || {
-    echo "AVISO: no se pudo aplicar la proteccion del workspace; el estado es NO PROTEGIDO." >&2
-  }
+if ! "$PYTHON" "$PROJECT_ROOT/game-development/scripts/workspace_guard.py" protect "$PROJECT_ROOT" \
+  --service-uid "$SERVICE_UID" --service-gid "$(id -g "$SERVICE_USER")" --agent-uid "$AGENT_UID"; then
+    echo "ERROR: no se pudo verificar la proteccion del workspace; no se habilita systemd." >&2
+    exit 2
+fi
 
 systemctl daemon-reload
-echo "Instalado. Falta:"
-echo "  1. Configurar OIDC real en $CONFIG_DIR/authority.json"
-echo "  2. systemctl enable --now spec-guardian-authority"
-echo "  3. Verificar: workspace_guard.py verify $PROJECT_ROOT --service-uid $SERVICE_UID --agent-uid $AGENT_UID"
+if ! "$PYTHON" "$PROJECT_ROOT/game-development/scripts/authority_service.py" --config "$CONFIG_DIR/authority.json" --check; then
+  echo "ERROR: SETUP INCOMPLETE; autoridad no se habilita." >&2
+  exit 2
+fi
+echo "Preflight satisfactorio. Para instalar y habilitar servicio: systemctl enable --now spec-guardian-authority"
