@@ -10,7 +10,7 @@
   "revoked": false,
   "key_id": "KEY-2026-11-05-001",
   "algorithm": "Ed25519",
-  "signature": "wSm2oP+2OWN0ESXTYo6uM5KxFQ6K6DKJ4L3Cee2Tazl846oP75GPvuUBkA2wko79TXjrh161iuCnVt3f7DS0Bg==",
+  "signature": "f4r8VE6JPeUanbvnDiqer7b0S4toqHWNUi46y8uRIrQ4+7HiprZqPjOtK/V8/w3YOrB13Zgoi++b9dwOxOqABg==",
   "signed_at": "2026-11-05",
   "signer": "usuario"
 }

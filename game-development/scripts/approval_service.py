@@ -23,6 +23,9 @@ def canonical_payload(approval: dict) -> bytes:
         "scope": approval.get("scope"),
         "authorization_event_id": approval.get("authorization_event_id"),
         "key_id": approval.get("key_id"),
+        "project": approval.get("project"),
+        "operations": approval.get("operations") or [],
+        "authorized_paths": approval.get("authorized_paths") or [],
     }
     return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
