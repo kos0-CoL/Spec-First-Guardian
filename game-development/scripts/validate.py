@@ -254,6 +254,42 @@ def validate_spec(path: Path, approval: dict | None = None, public_key_pem: byte
     return result
 
 
+def authorize_operation(approval: dict | None, operation: dict, public_key_pem: bytes | None = None) -> bool:
+    """Comprueba si una operacion esta dentro del alcance de una autorizacion (SPEC-001)."""
+    if not approval:
+        return False
+    if not approval_service.verify_approval(approval, public_key_pem=public_key_pem):
+        return False
+    spec_id = str(operation.get("spec_id") or "")
+    version = str(operation.get("version") or "")
+    approval_spec_id = str(approval.get("spec_id") or "")
+    approval_version = str(approval.get("version") or "")
+    approval_project = str(approval.get("project") or "")
+    operation_project = str(operation.get("project") or approval_project or "")
+    if operation_project != approval_project or spec_id != approval_spec_id or version != approval_version:
+        return False
+    revoked = False
+    for entry in load_revocations(spec_id) if spec_id else []:
+        if isinstance(entry, dict) and entry.get("authorization_event_id") == approval.get("authorization_event_id") and bool(entry.get("revoked")):
+            revoked = True
+            break
+    if revoked or bool(approval.get("revoked", False)):
+        return False
+    scope = str(approval.get("scope") or "ALCANCE_TOTAL")
+    if scope and scope != "ALCANCE_TOTAL":
+        if str(operation.get("operation_type") or "") not in [str(o) for o in (approval.get("operations") or [])]:
+            return False
+        paths = [str(p) for p in (approval.get("authorized_paths") or [])]
+        path = str(operation.get("path") or operation.get("resource") or "")
+        if paths and path and not any(path == p or path.startswith(p.rstrip("/") + "/") for p in paths):
+            return False
+    tasks = [str(t) for t in (approval.get("tasks") or [])]
+    task_id = str(operation.get("task_id") or "")
+    if task_id and tasks and task_id not in tasks:
+        return False
+    return True
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Valida una especific para el Spec-First Guardian.")
     parser.add_argument("spec", type=Path, help="Ruta al archivo de especificacion (Markdown).")

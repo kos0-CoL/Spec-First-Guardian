@@ -91,11 +91,12 @@ def write_temp(content: str) -> Path:
     return Path(tmp.name)
 
 
-def ed25519_signed_approval(fingerprint: str, key_id: str = "KEY-TEST-001") -> tuple:
+def ed25519_signed_approval(fingerprint: str, key_id: str = "KEY-TEST-001", **overrides) -> tuple:
     approval = {
         "spec_id": "SPEC-001",
         "version": "1.0.0",
         "approver": "usuario",
+        "project": "Spec-First-Guardian",
         "approved_at": "2026-11-05",
         "fingerprint": fingerprint,
         "scope": "ALCANCE_TOTAL",
@@ -103,6 +104,7 @@ def ed25519_signed_approval(fingerprint: str, key_id: str = "KEY-TEST-001") -> t
         "verified": True,
         "revoked": False,
     }
+    approval.update(overrides)
     private_key = Ed25519PrivateKey.generate()
     private_key_pem = private_key.private_bytes(
         encoding=serialization.Encoding.PEM,
@@ -206,6 +208,69 @@ class TestSpecValidator(unittest.TestCase):
             self.assertFalse(result["implementation_allowed"])
         finally:
             path.unlink()
+
+
+    def test_expired_ed25519_approval_is_blocked(self):
+        path = write_temp(APPROVED_SPEC)
+        try:
+            fingerprint = hashlib.sha256(APPROVED_SPEC.encode("utf-8")).hexdigest()
+            approval, public_key_pem = ed25519_signed_approval(fingerprint, expires_at="2020-01-01T00:00:00Z")
+            result = spec_validator.validate_spec(path, approval=approval, public_key_pem=public_key_pem)
+            self.assertFalse(result["approval_valid"])
+            self.assertFalse(result["implementation_allowed"])
+        finally:
+            path.unlink()
+
+    def test_agent_generated_self_certified_approval_is_blocked(self):
+        path = write_temp(APPROVED_SPEC)
+        try:
+            fingerprint = hashlib.sha256(APPROVED_SPEC.encode("utf-8")).hexdigest()
+            approval, public_key_pem = ed25519_signed_approval(fingerprint)
+            approval["public_key"] = public_key_pem.decode("ascii")
+            approval["verified"] = True
+            other_key = Ed25519PrivateKey.generate()
+            other_pub = other_key.public_key().public_bytes(encoding=serialization.Encoding.PEM, format=serialization.PublicFormat.SubjectPublicKeyInfo)
+            result = spec_validator.validate_spec(path, approval=approval, public_key_pem=other_pub)
+            self.assertFalse(result["implementation_allowed"])
+        finally:
+            path.unlink()
+
+    def test_authorize_operation_rejects_unauthorized_scope(self):
+        fingerprint = hashlib.sha256(APPROVED_SPEC.encode("utf-8")).hexdigest()
+        approval, public_key_pem = ed25519_signed_approval(fingerprint, scope="INVENTARIO", operations=["create_inventory"], authorized_paths=["src/inventory"])
+        operation_in_scope = {
+            "project": "Spec-First-Guardian",
+            "spec_id": "SPEC-001",
+            "version": "1.0.0",
+            "operation_type": "create_inventory",
+            "task_id": "TASK-001",
+            "path": "src/inventory",
+        }
+        operation_out_scope = {
+            "project": "Spec-First-Guardian",
+            "spec_id": "SPEC-001",
+            "version": "1.0.0",
+            "operation_type": "create_auth",
+            "task_id": "TASK-001",
+            "path": "src/auth",
+        }
+        self.assertTrue(spec_validator.authorize_operation(approval, operation_in_scope, public_key_pem=public_key_pem))
+        self.assertFalse(spec_validator.authorize_operation(approval, operation_out_scope, public_key_pem=public_key_pem))
+
+    def test_authorize_operation_requires_matching_version_and_project(self):
+        fingerprint = hashlib.sha256(APPROVED_SPEC.encode("utf-8")).hexdigest()
+        approval, public_key_pem = ed25519_signed_approval(fingerprint)
+        operation = {
+            "project": "Spec-First-Guardian",
+            "spec_id": "SPEC-001",
+            "version": "1.0.0",
+            "operation_type": "create_code",
+            "task_id": "TASK-001",
+            "path": "src/code.py",
+        }
+        self.assertTrue(spec_validator.authorize_operation(approval, operation, public_key_pem=public_key_pem))
+        self.assertFalse(spec_validator.authorize_operation(approval, dict(operation, version="0.9.0"), public_key_pem=public_key_pem))
+        self.assertFalse(spec_validator.authorize_operation(approval, dict(operation, project="Otro-Repo"), public_key_pem=public_key_pem))
 
 
 if __name__ == "__main__":

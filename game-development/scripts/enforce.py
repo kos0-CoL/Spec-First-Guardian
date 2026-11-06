@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -13,9 +14,37 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import validate
 
 
-def evaluate_write(operation: str, spec_path: Path, task_id: str = "TASK-001", approval_path: Path | None = None) -> dict:
+def evaluate_write(operation: str, spec_path: Path, task_id: str = "TASK-001", approval_path: Path | None = None, operation_context: dict | None = None) -> dict:
     approval = validate.load_approval(approval_path) if approval_path else None
-    result = validate.validate_spec(spec_path, approval=approval)
+    public_key_pem = None
+    env_public_key = os.environ.get("SPEC_GUARDIAN_ED25519_PUBLIC_KEY")
+    if env_public_key:
+        public_key_pem = env_public_key.encode("utf-8")
+    allowed = False
+    reason = "IMPLEMENTACION BLOQUEADA: PENDIENTE DE APROBACION HUMANA."
+    if operation_context is not None:
+        allowed = bool(validate.authorize_operation(approval, operation_context, public_key_pem=public_key_pem))
+        spec_id = str(operation_context.get("spec_id") or "")
+        version = str(operation_context.get("version") or "")
+        if allowed:
+            return {
+                "allowed": True,
+                "operation": operation,
+                "task_id": task_id,
+                "spec_id": spec_id,
+                "version": version,
+                "reason": "Operacion verificada dentro del alcance autorizado.",
+            }
+        reason = "IMPLEMENTACION BLOQUEADA: LA OPERACION NO ESTA CONFORME AL ALCANCE AUTORIZADO."
+        return {
+            "allowed": False,
+            "operation": operation,
+            "task_id": task_id,
+            "spec_id": spec_id,
+            "version": version,
+            "reason": reason,
+        }
+    result = validate.validate_spec(spec_path, approval=approval, public_key_pem=public_key_pem)
     allowed = bool(result.get("implementation_allowed"))
     if allowed:
         return {
